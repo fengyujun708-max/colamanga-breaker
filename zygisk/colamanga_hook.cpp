@@ -20,6 +20,7 @@
 #include <android/log.h>
 #include <errno.h>
 #include <pthread.h>
+#include <strings.h>
 
 #define TAG "ColaMangaHook"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -116,6 +117,7 @@ static long hook_ptrace(int request, pid_t pid, void* addr, void* data) {
 
 // openat（隐藏 root/xposed/frida 文件 + 文件沙箱）
 typedef int (*openat_t)(int, const char*, int, ...);
+static void track_sensitive_fd(int fd, const char* path);  // 前向声明
 static int hook_openat(int dirfd, const char* path, int flags, ...) {
     if (path) {
         // 隐藏 root/xposed/frida 痕迹
@@ -139,7 +141,9 @@ static int hook_openat(int dirfd, const char* path, int flags, ...) {
     }
     mode_t mode = 0;
     if (flags & O_CREAT) { va_list ap; va_start(ap, flags); mode = va_arg(ap, int); va_end(ap); }
-    return ((openat_t)tramp_openat)(dirfd, path, flags, mode);
+    int fd = ((openat_t)tramp_openat)(dirfd, path, flags, mode);
+    if (fd >= 0) track_sensitive_fd(fd, path);
+    return fd;
 }
 
 // connect（抓包记录）
@@ -159,6 +163,76 @@ static int hook_connect(int sockfd, const struct sockaddr* addr, socklen_t addrl
         }
     }
     return ((connect_t)tramp_connect)(sockfd, addr, addrlen);
+}
+
+// ====== read hook：过滤 /proc/self/maps 中的注入痕迹（反 Frida 检测） ======
+typedef ssize_t (*read_t)(int, void*, size_t);
+static void* tramp_read = nullptr;
+static unsigned char orig_read[16];
+
+// 敏感 fd 跟踪（openat 记录，read 过滤用）
+static int sensitive_fds[64];
+static int sens_count = 0;
+static pthread_mutex_t sens_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static bool is_sensitive_path(const char* path) {
+    return (strstr(path, "/proc/self/maps") || strstr(path, "/maps") ||
+            strstr(path, "/proc/self/status") || strstr(path, "/proc/self/exe") ||
+            strstr(path, "/proc/self/task"));
+}
+
+static bool is_sensitive_fd(int fd) {
+    for (int i = 0; i < sens_count; i++) if (sensitive_fds[i] == fd) return true;
+    return false;
+}
+
+// 过滤 buffer 中的敏感行（保持字节数不变，空格填充）
+static void sanitize_buffer(char* buf, ssize_t n) {
+    // 找含敏感关键词的行，整行空格填充
+    const char* kws[] = {"frida", "gadget", "xposed", "lsposed", "zygisk", "magisk", "riru", "riru", nullptr};
+    ssize_t i = 0;
+    while (i < n) {
+        // 找行首
+        ssize_t line_start = i;
+        // 找行尾（换行符）
+        ssize_t line_end = i;
+        while (line_end < n && buf[line_end] != '\n') line_end++;
+        // 检查这行是否含敏感词
+        bool dirty = false;
+        for (int k = 0; kws[k]; k++) {
+            // 行内搜索关键词
+            for (ssize_t j = line_start; j + (ssize_t)strlen(kws[k]) <= line_end; j++) {
+                if (strncasecmp(buf + j, kws[k], strlen(kws[k])) == 0) { dirty = true; break; }
+            }
+            if (dirty) break;
+        }
+        if (dirty) {
+            // 整行空格填充（保持长度）
+            for (ssize_t j = line_start; j < line_end; j++) buf[j] = ' ';
+            if (line_end < n && buf[line_end] == '\n') buf[line_end] = '\n';
+        }
+        // 移动到下一行
+        i = (line_end < n) ? line_end + 1 : n;
+    }
+}
+
+static ssize_t hook_read(int fd, void* buf, size_t count) {
+    ssize_t n = ((read_t)tramp_read)(fd, buf, count);
+    if (n > 0 && buf && is_sensitive_fd(fd)) {
+        sanitize_buffer((char*)buf, n);
+    }
+    return n;
+}
+
+// hook openat 时同步记录敏感 fd（在 hook_openat 里调用）
+static void track_sensitive_fd(int fd, const char* path) {
+    if (fd < 0 || !path) return;
+    if (!is_sensitive_path(path)) return;
+    pthread_mutex_lock(&sens_lock);
+    if (sens_count < 64) {
+        sensitive_fds[sens_count++] = fd;
+    }
+    pthread_mutex_unlock(&sens_lock);
 }
 
 // ====== 安装所有 hook ======
@@ -182,6 +256,11 @@ static void install_all_hooks() {
     fn = dlsym(RTLD_DEFAULT, "connect");
     if (fn) do_hook("connect", fn, (void*)hook_connect, &tramp_connect, orig_connect);
     else LOGE("connect not found");
+    
+    // read（过滤 maps 注入痕迹，反 frida 检测）
+    fn = dlsym(RTLD_DEFAULT, "read");
+    if (fn) do_hook("read", fn, (void*)hook_read, &tramp_read, orig_read);
+    else LOGE("read not found");
     
     LOGI("All inline hooks installed");
 }

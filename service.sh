@@ -114,9 +114,11 @@ echo "[service] colamanga_mod started at $(date), profile=$PROFILE" >> "$LOGS/se
 FRIDA=$(grep '^frida_enabled=' "$SETTINGS" 2>/dev/null | cut -d= -f2)
 if [ "$FRIDA" = "1" ]; then
     if [ -f "$MODDIR/frida/frida-server" ]; then
-        # 启动 frida-server（root 后台）
-        nohup "$MODDIR/frida/frida-server" -l 0.0.0.0:27042 > "$LOGS/frida.log" 2>&1 &
+        # 反检测：复制为更名进程 zyncd + 非标准端口 8799，避免 frida 特征
+        cp "$MODDIR/frida/frida-server" "$MODDIR/frida/zyncd" 2>/dev/null
+        chmod 0755 "$MODDIR/frida/zyncd"
+        nohup "$MODDIR/frida/zyncd" -l 127.0.0.1:8799 > "$LOGS/frida.log" 2>&1 &
         echo $! > "$RUN/frida.pid"
-        echo "[service] frida-server started on :27042 (pid $(cat $RUN/frida.pid))" >> "$LOGS/service.log"
+        echo "[service] frida(zyncd) started on 127.0.0.1:8799 (pid $(cat $RUN/frida.pid))" >> "$LOGS/service.log"
     fi
 fi

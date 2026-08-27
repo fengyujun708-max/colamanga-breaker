@@ -128,11 +128,13 @@ EOF
     # frida start/stop/status
     case "$2" in
       start)
-        KEY=$(grep '^frida_enabled=' "$SETTINGS" 2>/dev/null | cut -d= -f2)
         sed "s/^frida_enabled=.*/frida_enabled=1/" "$SETTINGS" > "$MODDIR/run/.tmp" && mv "$MODDIR/run/.tmp" "$SETTINGS"
-        nohup "$MODDIR/frida/frida-server" -l 0.0.0.0:27042 > "$MODDIR/logs/frida.log" 2>&1 &
+        # 反检测：改名 zyncd + 非标准端口 8799
+        cp "$MODDIR/frida/frida-server" "$MODDIR/frida/zyncd" 2>/dev/null
+        chmod 0755 "$MODDIR/frida/zyncd"
+        nohup "$MODDIR/frida/zyncd" -l 127.0.0.1:8799 > "$MODDIR/logs/frida.log" 2>&1 &
         echo $! > "$MODDIR/run/frida.pid"
-        echo "{\"frida\":\"started\",\"pid\":\"$(cat $MODDIR/run/frida.pid)\"}"
+        echo "{\"frida\":\"started\",\"pid\":\"$(cat $MODDIR/run/frida.pid)\",\"port\":8799,\"name\":\"zyncd\"}"
         ;;
       stop)
         sed "s/^frida_enabled=.*/frida_enabled=0/" "$SETTINGS" > "$MODDIR/run/.tmp" && mv "$MODDIR/run/.tmp" "$SETTINGS"
@@ -142,7 +144,7 @@ EOF
       status)
         PID=$(cat "$MODDIR/run/frida.pid" 2>/dev/null)
         if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-          echo "{\"frida\":\"running\",\"pid\":\"$PID\",\"port\":27042}"
+          echo "{\"frida\":\"running\",\"pid\":\"$PID\",\"port\":8799,\"name\":\"zyncd\"}"
         else
           echo "{\"frida\":\"stopped\"}"
         fi
