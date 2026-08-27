@@ -115,6 +115,35 @@ EOF
     echo "\"ro_hardware\":\"$(getprop ro.hardware)\""
     echo "}"
     ;;
+  diagnosis)
+    # 综合诊断：native so 生效状态 + 漫城解锁状态
+    echo "===== 设备属性（判断 native hook 是否生效）====="
+    echo "ro.serialno        = $(getprop ro.serialno)"
+    echo "ro.boot.serialno   = $(getprop ro.boot.serialno)"
+    echo "ro.build.fingerprint = $(getprop ro.build.fingerprint)"
+    echo "ro.product.model   = $(getprop ro.product.model)"
+    echo "ro.product.brand   = $(getprop ro.product.brand)"
+    echo "ro.hardware        = $(getprop ro.hardware)"
+    echo ""
+    echo "===== 漫城进程 ====="
+    for pkg in com.hswl.car_owner com.hswl.cargo_owner.cargo_owner; do
+      PID=$(pidof $pkg 2>/dev/null | tr ' ' '\n' | head -1)
+      if [ -n "$PID" ]; then
+        echo "$pkg : PID=$PID UID=$(awk '/^Uid/{print $2}' /proc/$PID/status 2>/dev/null)"
+        CNT=$(grep -c "libcolamanga_hook" /proc/$PID/maps 2>/dev/null)
+        echo "  libcolamanga_hook.so 加载: $([ "$CNT" -gt 0 ] && echo YES || echo NO)"
+      else
+        echo "$pkg : 未运行"
+      fi
+    done
+    echo ""
+    echo "===== 漫城解锁状态(lastAdTime) ====="
+    cat /data/data/com.hswl.cargo_owner.cargo_owner/shared_prefs/FlutterSharedPreferences.xml 2>/dev/null | grep -oE 'lastAdTime[^/]*' || echo "  无 lastAdTime"
+    echo "当前时间戳: $(date +%s%3N)"
+    echo ""
+    echo "===== 模块日志 ====="
+    tail -n 10 "$MODDIR/logs/service.log" 2>/dev/null
+    ;;
   connections)
     # 返回目标进程当前网络连接
     for pkg in com.hswl.car_owner com.hswl.cargo_owner.cargo_owner; do
