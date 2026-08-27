@@ -1,0 +1,10 @@
+id=colamanga_mod
+name=Colamanga 破甲模块 (宇宙无敌版)
+version=v1.0.0
+versionCode=100
+author=DevFaker
+description=针对 com.hswl.car_owner / com.hswl.cargo_owner.cargo_owner 的全能破甲模块：硬件信息全伪造(resetprop原生级)+Zygisk so层hook(__system_property_get/dlopen/ptrace/open/connect)+反调试+TracerPid清零+so修改检测绕过+签名绕过+超级抓包+WebUI总控
+minMagisk=25200
+maxMagisk=27000
+support=clash
+webroot=webui

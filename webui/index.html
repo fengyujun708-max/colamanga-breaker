@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Colamanga Ultimate Breaker</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0e17;color:#e0e0e0;padding:12px;max-width:900px;margin:0 auto}
+h1{font-size:18px;background:linear-gradient(90deg,#00f5a0,#00d9f5);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:4px}
+.subtitle{font-size:11px;color:#666;margin-bottom:12px}
+.card{background:#131722;border:1px solid #1e2536;border-radius:8px;padding:12px;margin-bottom:10px}
+.card h2{font-size:14px;color:#00d9f5;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.dot-green{background:#00f5a0;box-shadow:0 0 6px #00f5a0}
+.dot-red{background:#ff4757;box-shadow:0 0 6px #ff4757}
+.dot-yellow{background:#ffa502;box-shadow:0 0 6px #ffa502}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #1e2536}
+.toggle-row:last-child{border:0}
+.toggle-label{font-size:13px}
+.toggle-desc{font-size:10px;color:#555;margin-top:2px}
+.toggle{position:relative;width:44px;height:24px;background:#2a2f3e;border-radius:12px;cursor:pointer;transition:.3s;flex-shrink:0}
+.toggle.on{background:#00d9f5}
+.toggle::after{content:'';position:absolute;width:18px;height:18px;background:#e0e0e0;border-radius:50%;top:3px;left:3px;transition:.3s}
+.toggle.on::after{transform:translateX(20px);background:#fff}
+.btn{padding:6px 14px;border:0;border-radius:6px;font-size:12px;cursor:pointer;transition:.2s}
+.btn-primary{background:#00d9f5;color:#000}
+.btn-warn{background:#ffa502;color:#000}
+.btn-danger{background:#ff4757;color:#fff}
+.btn-ghost{background:#2a2f3e;color:#aaa;border:1px solid #3a3f4e}
+.btn:active{transform:scale(.95)}
+.profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
+.profile-card{background:#1a1f2e;border:1px solid #2a2f3e;border-radius:6px;padding:8px;cursor:pointer;text-align:center}
+.profile-card.active{border-color:#00d9f5;background:#0d1a2a}
+.profile-card .name{font-size:12px;font-weight:bold}
+.profile-card .model{font-size:10px;color:#666;margin-top:2px}
+.log-box{background:#0a0e17;border:1px solid #1e2536;border-radius:6px;padding:8px;font-family:monospace;font-size:10px;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+.log-box::-webkit-scrollbar{width:4px}
+.log-box::-webkit-scrollbar-thumb{background:#333;border-radius:2px}
+.tab-bar{display:flex;gap:4px;margin-bottom:6px}
+.tab{padding:4px 12px;font-size:11px;border-radius:6px;cursor:pointer;background:#1a1f2e;border:1px solid #2a2f3e}
+.tab.active{background:#00d9f5;color:#000}
+.info-row{display:flex;justify-content:space-between;font-size:11px;padding:3px 0;color:#888}
+.info-row span:last-child{color:#00f5a0}
+.action-row{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<h1>⚡ Colamanga Ultimate Breaker</h1>
+<div class="subtitle" id="version">v1.0.0 · 宇宙无敌破甲模块 · 目标: com.hswl.car_owner / com.hswl.cargo_owner.cargo_owner</div>
+
+<div class="card">
+<h2><span class="status-dot" id="status-dot"></span> 模块状态</h2>
+<div class="info-row"><span>目标进程 PID</span><span id="pid">未运行</span></div>
+<div class="info-row"><span>当前设备方案</span><span id="profile">--</span></div>
+<div class="info-row"><span>身份模式</span><span id="idmode">--</span></div>
+<div class="info-row"><span>注入状态</span><span id="inject">--</span></div>
+<div class="action-row">
+<button class="btn btn-ghost" onclick="refresh()">🔄 刷新</button>
+<button class="btn btn-warn" onclick="killApp()">⏹ 强制停止漫城</button>
+<button class="btn btn-primary" onclick="execCmd('status')">诊断</button>
+</div>
+</div>
+
+<div class="card">
+<h2>🎚 功能开关</h2>
+<div class="toggle-row"><div><div class="toggle-label">全局属性伪造 (resetprop)</div><div class="toggle-desc">系统级修改所有 ro.* 属性，影响所有应用</div></div><div class="toggle" id="t-global_resetprop" onclick="toggle('global_resetprop')"></div></div>
+<div class="toggle-row"><div><div class="toggle-label">Zygisk 原生层 Hook</div><div class="toggle-desc">so 层 __system_property_get/dlopen/ptrace/open hook（仅目标进程）</div></div><div class="toggle" id="t-zygisk_hook" onclick="toggle('zygisk_hook')"></div></div>
+<div class="toggle-row"><div><div class="toggle-label">反调试屏蔽</div><div class="toggle-desc">ptrace 返回失败 + TracerPid 清零 + 反 frida 检测</div></div><div class="toggle" id="t-anti_debug" onclick="toggle('anti_debug')"></div></div>
+<div class="toggle-row"><div><div class="toggle-label">Root 隐藏</div><div class="toggle-desc">隐藏 su/magisk/zygisk 痕迹（仅目标进程）</div></div><div class="toggle" id="t-hide_root" onclick="toggle('hide_root')"></div></div>
+<div class="toggle-row"><div><div class="toggle-label">Xposed/LSPosed 隐藏</div><div class="toggle-desc">隐藏 LSPosed 注入痕迹（maps/文件/类）</div></div><div class="toggle" id="t-hide_xposed" onclick="toggle('hide_xposed')"></div></div>
+<div class="toggle-row"><div><div class="toggle-label">超级抓包</div><div class="toggle-desc">记录所有网络连接 + DNS + 请求 URL（仅目标进程）</div></div><div class="toggle" id="t-packet_capture" onclick="toggle('packet_capture')"></div></div>
+<div class="toggle-row"><div><div class="toggle-label">应用日志监控</div><div class="toggle-desc">实时记录漫城 logcat（设备/广告/解锁相关）</div></div><div class="toggle" id="t-app_log_monitor" onclick="toggle('app_log_monitor')"></div></div>
+<div class="toggle-row"><div><div class="toggle-label">签名校验绕过</div><div class="toggle-desc">hook PackageManager/Signature 返回原始签名</div></div><div class="toggle" id="t-signature_bypass" onclick="toggle('signature_bypass')"></div></div>
+<div class="toggle-row"><div><div class="toggle-label">身份持久化锁定</div><div class="toggle-desc">锁定设备指纹不变，防止广告因设备变化而重置</div></div><div class="toggle" id="t-persistent_identity" onclick="toggle('persistent_identity')"></div></div>
+</div>
+
+<div class="card">
+<h2>📱 设备身份管理</h2>
+<div style="font-size:11px;color:#888;margin-bottom:6px">模式: <b id="identity_mode_label">--</b> · 锁定=持久固定身份(防广告重置) · 随机=每次新设备</div>
+<div class="profile-grid">
+<div class="profile-card" id="p-profile_xiaomi" onclick="setProfile('profile_xiaomi')"><div class="name">小米 Redmi</div><div class="model">2201123C · socrates</div></div>
+<div class="profile-card" id="p-profile_oneplus" onclick="setProfile('profile_oneplus')"><div class="name">一加 9RT</div><div class="model">MT2110 · qcom</div></div>
+<div class="profile-card" id="p-profile_oppo" onclick="setProfile('profile_oppo')"><div class="name">OPPO Reno8</div><div class="model">PGZ110 · mt6893</div></div>
+<div class="profile-card" onclick="randomize()" style="border-color:#ffa502"><div class="name">🎲 随机生成</div><div class="model">全新身份</div></div>
+</div>
+<div class="action-row">
+<button class="btn btn-ghost" onclick="execCmd('get_props')">查看当前属性</button>
+<button class="btn btn-ghost" onclick="execCmd('connections')">查看网络连接</button>
+</div>
+</div>
+
+<div class="card">
+<h2>📊 实时日志</h2>
+<div class="tab-bar">
+<div class="tab active" onclick="switchLog('app')">应用日志</div>
+<div class="tab" onclick="switchLog('net')">网络抓包</div>
+<div class="tab" onclick="switchLog('service')">模块日志</div>
+<div class="tab" onclick="switchLog('boot')">启动日志</div>
+</div>
+<div class="log-box" id="log-box">点击刷新查看日志...</div>
+<div class="action-row">
+<button class="btn btn-ghost" onclick="loadLog()">🔄 刷新</button>
+<button class="btn btn-danger" onclick="clearLog()">🗑 清空</button>
+<button class="btn btn-ghost" onclick="autoRefresh()">⏱ 自动刷新</button>
+</div>
+</div>
+
+<div class="card">
+<h2>🔍 当前真实设备属性</h2>
+<div id="props-box" style="font-family:monospace;font-size:10px;color:#888">点击"查看当前属性"按钮...</div>
+</div>
+
+<script>
+var MODDIR='/data/adb/colamanga_mod';
+var currentLog='app';
+var autoTimer=null;
+
+// ===== Shell 执行（兼容 Magisk/KSU/MMRL）=====
+function exec(cmd){
+  try{ if(typeof AndroidInterface!=='undefined'&&AndroidInterface.exec) return AndroidInterface.exec(cmd); }catch(e){}
+  try{ if(typeof ksu!=='undefined'&&ksu.exec) return ksu.exec(cmd); }catch(e){}
+  try{ if(typeof mmrl!=='undefined'&&mmrl.exec) return mmrl.exec(cmd); }catch(e){}
+  return '{"error":"no shell interface"}';
+}
+
+function execCmd(sub){
+  var r=exec('sh '+MODDIR+'/control/control.sh '+sub);
+  try{ return JSON.parse(r); }catch(e){ return r; }
+}
+
+// ===== 初始化 =====
+function refresh(){
+  var s=execCmd('status');
+  if(typeof s==='string'){ document.getElementById('status-dot').className='status-dot dot-red'; return; }
+  var pid=s.pid1||s.pid2||'';
+  document.getElementById('pid').textContent=pid?'运行中 ('+pid+')':'未运行';
+  document.getElementById('status-dot').className='status-dot '+(pid?'dot-green':'dot-red');
+  document.getElementById('profile').textContent=s.profile||'--';
+  document.getElementById('idmode').textContent=s.identity_mode||'--';
+  document.getElementById('identity_mode_label').textContent=s.identity_mode||'--';
+  document.getElementById('inject').textContent=s.zygisk=='1'?'Zygisk已启用':'未启用';
+
+  var toggles=['global_resetprop','zygisk_hook','anti_debug','hide_root','hide_xposed','packet_capture','app_log_monitor','signature_bypass','persistent_identity'];
+  toggles.forEach(function(k){
+    var el=document.getElementById('t-'+k);
+    if(el){ var val=s[k]!==undefined?s[k]:'0'; el.className='toggle'+(val=='1'?' on':''); }
+  });
+  // 高亮当前方案
+  ['profile_xiaomi','profile_oneplus','profile_oppo'].forEach(function(p){
+    var el=document.getElementById('p-'+p);
+    if(el) el.className='profile-card'+(p==s.profile?' active':'');
+  });
+}
+
+function toggle(key){
+  var r=execCmd('toggle '+key);
+  refresh();
+}
+
+function setProfile(name){
+  execCmd('set_profile '+name);
+  refresh();
+}
+
+function randomize(){
+  execCmd('randomize');
+  setTimeout(refresh,500);
+}
+
+function killApp(){
+  execCmd('kill_app');
+  setTimeout(refresh,1000);
+}
+
+// ===== 日志 =====
+function switchLog(type){ currentLog=type; document.querySelectorAll('.tab').forEach(function(t){t.className='tab'}); event.target.className='tab active'; loadLog(); }
+function loadLog(){
+  var r=exec('sh '+MODDIR+'/control/control.sh log '+currentLog+' 80');
+  document.getElementById('log-box').textContent=r||'(空)';
+}
+function clearLog(){ execCmd('clear_log '+currentLog); loadLog(); }
+function autoRefresh(){
+  if(autoTimer){ clearInterval(autoTimer); autoTimer=null; alert('自动刷新已关闭'); return; }
+  autoTimer=setInterval(loadLog,3000);
+  loadLog();
+  alert('自动刷新已开启(3秒)');
+}
+
+// ===== 属性查看 =====
+function loadProps(){
+  var r=exec('sh '+MODDIR+'/control/control.sh get_props');
+  document.getElementById('props-box').textContent=r;
+}
+
+// 覆盖 execCmd 以支持不同返回
+function execCmd(sub){
+  var r=exec('sh '+MODDIR+'/control/control.sh '+sub);
+  try{ return JSON.parse(r); }catch(e){ return r; }
+}
+
+// 初始加载
+refresh();
+loadLog();
+</script>
+</body>
+</html>

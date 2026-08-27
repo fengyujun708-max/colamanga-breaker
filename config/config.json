@@ -1,0 +1,27 @@
+{
+  "version": "1.0.0",
+  "name": "Colamanga Ultimate Breaker",
+  "target_packages": ["com.hswl.car_owner", "com.hswl.cargo_owner.cargo_owner"],
+  "description": "宇宙无敌破甲模块：硬件全伪造 + Zygisk so层hook + 反调试 + 超级抓包 + WebUI总控",
+  "features": {
+    "global_resetprop": false,
+    "zygisk_hook": true,
+    "anti_debug": true,
+    "hide_root": true,
+    "hide_xposed": true,
+    "hide_frida": true,
+    "packet_capture": true,
+    "app_log_monitor": true,
+    "signature_bypass": true,
+    "persistent_identity": true,
+    "identity_mode": "locked",
+    "active_profile": "profile_xiaomi"
+  },
+  "profiles": ["profile_xiaomi", "profile_oneplus", "profile_oppo", "profile_random_*"],
+  "notes": [
+    "所有 hook 仅对目标进程生效，不影响系统或其他应用",
+    "身份持久化：锁定后即使清数据/重装/换账号，广告系统始终认同一台设备",
+    "防闪退：每个 hook 独立 try-catch，失败自动降级",
+    "Zygisk so 需在 Magisk 中启用 Zygisk 后生效"
+  ]
+}

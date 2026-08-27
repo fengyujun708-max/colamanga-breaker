@@ -1,0 +1,8 @@
+#!/system/bin/sh
+# ====== Magisk 模块打包脚本 (META-INF) ======
+# 此文件由 Magisk 在安装 zip 时执行
+# 交给 customize.sh 处理
+
+SKIPUNZIP=0
+# customize.sh 会被 Magisk 自动执行
+ui_print "Installing Colamanga Ultimate Breaker..."
