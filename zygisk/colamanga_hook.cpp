@@ -145,8 +145,6 @@ static int hook_connect(int sockfd, const struct sockaddr* addr, socklen_t addrl
         }
         if (ip[0] && strcmp(ip, "127.0.0.1") != 0 && strcmp(ip, "::1") != 0) {
             LOGI("[CAPTURE] %s:%d fd=%d", ip, port, sockfd);
-            FILE* f = fopen("/data/adb/colamanga_mod/logs/network.log", "a");
-            if (f) { fprintf(f, "%s connect %s:%d fd=%d\n", __TIME__, ip, port, sockfd); fclose(f); }
         }
     }
     return ((connect_t)tramp_connect)(sockfd, addr, addrlen);
