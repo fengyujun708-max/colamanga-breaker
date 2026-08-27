@@ -127,6 +127,22 @@ fi
 
 echo "[service] colamanga_mod started at $(date), profile=$PROFILE" >> "$LOGS/service.log"
 
+# ===== WebUI HTTP 服务器（127.0.0.1:8799） =====
+# 用 busybox httpd 或 sh 自建轻量服务
+if command -v busybox >/dev/null 2>&1; then
+    # busybox httpd 方式
+    nohup busybox httpd -h "$MODDIR/webui" -p 8799 > "$LOGS/webui.log" 2>&1 &
+    echo $! > "$RUN/webui.pid"
+    echo "[service] WebUI (busybox) started on 127.0.0.1:8799" >> "$LOGS/service.log"
+elif command -v nc >/dev/null 2>&1; then
+    # nc 方式（简化版，只响应 index.html）
+    nohup sh -c 'while true; do (printf "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n"; cat /data/adb/modules/colamanga_mod/webui/index.html) | nc -l -p 8799 -q 1 > /dev/null 2>&1; done' > /dev/null 2>&1 &
+    echo $! > "$RUN/webui.pid"
+    echo "[service] WebUI (nc) started on 127.0.0.1:8799" >> "$LOGS/service.log"
+else
+    echo "[service] WebUI: 无 busybox/nc，请用 Magisk Manager 的 WebUI 按钮" >> "$LOGS/service.log"
+fi
+
 # ===== Frida server 集成 =====
 FRIDA=$(grep '^frida_enabled=' "$SETTINGS" 2>/dev/null | cut -d= -f2)
 if [ "$FRIDA" = "1" ]; then
