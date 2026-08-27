@@ -6,6 +6,7 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <android/log.h>
 #include <errno.h>
