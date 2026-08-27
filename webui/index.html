@@ -131,6 +131,19 @@ Java.perform(function(){
 <div id="props-box" style="font-family:monospace;font-size:10px;color:#888">点击"查看当前属性"按钮...</div>
 </div>
 
+<div class="card">
+<h2>🛡 保护与恢复</h2>
+<div style="font-size:11px;color:#888;margin-bottom:6px">广告数据快照防重置 / 诊断 / 安全模式</div>
+<div class="action-row">
+<button class="btn btn-primary" onclick="showDiag()">🔍 一键诊断</button>
+<button class="btn btn-ghost" onclick="execCmd('snapshot')">📸 快照广告数据</button>
+<button class="btn btn-warn" onclick="execCmd('restore')">♻️ 恢复快照</button>
+<button class="btn btn-danger" onclick="execCmd('safe_mode on')">🛑 安全模式</button>
+<button class="btn btn-ghost" onclick="execCmd('safe_mode off')">✅ 恢复Hook</button>
+</div>
+<div class="log-box" id="diag-box" style="display:none;min-height:150px">诊断中...</div>
+</div>
+
 <script>
 var MODDIR='/data/adb/modules/colamanga_mod';
 var currentLog='app';
@@ -222,6 +235,15 @@ function execCmd(sub){
 // 初始加载
 refresh();
 loadLog();
+
+// 诊断
+function showDiag(){
+  var box=document.getElementById('diag-box');
+  box.style.display='block';
+  box.textContent='诊断中...';
+  var r=exec('sh '+MODDIR+'/control/control.sh diagnosis');
+  box.textContent=r||'(无输出)';
+}
 </script>
 </body>
 </html>

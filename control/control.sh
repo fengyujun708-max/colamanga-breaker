@@ -181,7 +181,47 @@ EOF
       *) echo "{\"usage\":\"frida start|stop|status\"}" ;;
     esac
     ;;
+  snapshot)
+    SNAP="$MODDIR/snapshot"
+    mkdir -p "$SNAP"
+    for pkg in com.hswl.car_owner com.hswl.cargo_owner.cargo_owner; do
+      D="/data/data/$pkg"
+      [ -d "$D/shared_prefs" ] || continue
+      rm -rf "$SNAP/$pkg" && mkdir -p "$SNAP/$pkg/shared_prefs"
+      cp "$D"/shared_prefs/*.xml "$SNAP/$pkg/shared_prefs/" 2>/dev/null
+      [ -f "$D/app_flutter/userbox.hive" ] && cp "$D/app_flutter/userbox.hive" "$SNAP/$pkg/" 2>/dev/null
+    done
+    echo "{\"snapshot\":\"saved\"}"
+    ;;
+  restore)
+    SNAP="$MODDIR/snapshot"
+    [ -d "$SNAP" ] || { echo "{\"error\":\"无快照，先 snapshot\"}"; exit 1; }
+    for pkg in com.hswl.car_owner com.hswl.cargo_owner.cargo_owner; do
+      D="/data/data/$pkg"
+      [ -d "$SNAP/$pkg" ] || continue
+      cp "$SNAP"/$pkg/shared_prefs/*.xml "$D/shared_prefs/" 2>/dev/null
+      [ -f "$SNAP/$pkg/userbox.hive" ] && cp "$SNAP/$pkg/userbox.hive" "$D/app_flutter/" 2>/dev/null
+    done
+    echo "{\"restore\":\"done\"}"
+    ;;
+  safe_mode)
+    case "$2" in
+      on)
+        for k in global_resetprop zygisk_hook anti_debug hide_root hide_xposed packet_capture signature_bypass; do
+          sed "s/^$k=.*/$k=0/" "$SETTINGS" > "$MODDIR/run/.tmp" && cp "$MODDIR/run/.tmp" "$SETTINGS"
+        done
+        echo "{\"safe_mode\":\"on\",\"所有hook关闭\"}"
+        ;;
+      off)
+        for k in zygisk_hook anti_debug hide_root hide_xposed packet_capture app_log_monitor signature_bypass; do
+          sed "s/^$k=.*/$k=1/" "$SETTINGS" > "$MODDIR/run/.tmp" && cp "$MODDIR/run/.tmp" "$SETTINGS"
+        done
+        echo "{\"safe_mode\":\"off\",\"hook恢复\"}"
+        ;;
+      *) echo "{\"usage\":\"safe_mode on|off\"}" ;;
+    esac
+    ;;
   *)
-    echo "Usage: control.sh <status|toggle|set_profile|randomize|log|clear_log|kill_app|get_props|connections>"
+    echo "Usage: control.sh <status|toggle|set_profile|randomize|log|clear_log|kill_app|get_props|connections|diagnosis|frida|snapshot|restore|safe_mode>"
     ;;
 esac

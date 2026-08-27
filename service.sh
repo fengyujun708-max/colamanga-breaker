@@ -23,11 +23,16 @@ zygisk_hook=1
 anti_debug=1
 hide_root=1
 hide_xposed=1
+hide_frida=1
 packet_capture=1
 app_log_monitor=1
 signature_bypass=1
 persistent_identity=1
+identity_mode=locked
+frida_enabled=0
+safe_mode=0
 target_packages=com.hswl.car_owner,com.hswl.cargo_owner.cargo_owner
+webui_port=8799
 EOF
 
 # ===== 读取当前设备方案属性 =====
@@ -78,10 +83,22 @@ fi
 # ===== 漫城日志监控（logcat 过滤 colamanga 相关） =====
 LOG_MON=$(grep '^app_log_monitor=' "$SETTINGS" 2>/dev/null | cut -d= -f2)
 if [ "$LOG_MON" = "1" ]; then
-    TARGETS=$(grep '^target_packages=' "$SETTINGS" 2>/dev/null | cut -d= -f2 | tr ',' '|')
-    nohup logcat --pid=$(pidof -s $TARGETS 2>/dev/null | tr ' ' ',') 2>/dev/null | \
-        grep -iE 'cargo|mymanga|byazt|starlink|security|reward|unlock|device|adCount|reportAd' >> \
-        "$LOGS/app.log" 2>/dev/null &
+    # 循环监控两个包（app 重启后 PID 变化，需定期重查）
+    nohup sh -c '
+        while true; do
+            for pkg in com.hswl.car_owner com.hswl.cargo_owner.cargo_owner; do
+                PID=$(pidof "$pkg" 2>/dev/null | tr " " "\n" | head -1)
+                [ -z "$PID" ] && continue
+                # 该 pid 若已有监控则跳过
+                grep -q "$PID" /data/adb/modules/colamanga_mod/run/log_monitor_pids 2>/dev/null && continue
+                echo "$PID" >> /data/adb/modules/colamanga_mod/run/log_monitor_pids 2>/dev/null
+                ( logcat --pid="$PID" -v time 2>/dev/null | \
+                  grep -iE "cargo|mymanga|byazt|starlink|security|reward|unlock|device|adCount|reportAd|ColaManga" >> \
+                  /data/adb/modules/colamanga_mod/logs/app.log 2>/dev/null ) &
+            done
+            sleep 20
+        done
+    ' > /dev/null 2>&1 &
     echo $! > "$RUN/log_monitor.pid"
     echo "[service] app log monitor started" >> "$LOGS/service.log"
 fi
