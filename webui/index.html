@@ -65,7 +65,22 @@ h1{font-size:18px;background:linear-gradient(90deg,#00f5a0,#00d9f5);-webkit-back
 <div class="card">
 <h2>🎚 功能开关</h2>
 <div class="toggle-row"><div><div class="toggle-label">Frida Server</div><div class="toggle-desc">启动 frida-server (127.0.0.1:27042) 供动态分析，默认关闭</div></div><div class="toggle" id="t-frida_enabled" onclick="toggle('frida_enabled')"></div></div>
-<div class="action-row"><button class="btn btn-primary" onclick="execCmd('frida start')">🚀 启动Frida</button><button class="btn btn-danger" onclick="execCmd('frida stop')">⏹ 停止Frida</button></div></div>
+<div class="action-row"><button class="btn btn-primary" onclick="execCmd('frida start')">🚀 启动Frida</button><button class="btn btn-danger" onclick="execCmd('frida stop')">⏹ 停止Frida</button></div>
+<div style="font-size:10px;color:#666;margin-top:6px">电脑连接: <b>frida -H 127.0.0.1:27042 -f com.hswl.cargo_owner.cargo_owner -l hook.js</b>（手机需 adb forward 或同网段）</div></div>
+
+<div class="card">
+<h2>💉 自定义 Hook 脚本（Frida）</h2>
+<div style="font-size:11px;color:#888;margin-bottom:6px">可视化注入任意 Java/native 方法。脚本保存到模块目录，电脑 frida attach 后加载。</div>
+<div class="log-box" id="frida-script" style="min-height:120px">// 示例: hook Java 方法
+Java.perform(function(){
+    var Build = Java.use('android.os.Build');
+    Build.SERIAL.value = 'RMU48KXQN12PZ7C9';
+    console.log('Build.SERIAL 已伪造');
+});
+</div>
+<div class="action-row">
+<button class="btn btn-ghost" onclick="execCmd('log frida')">查看frida日志</button>
+</div></div>
 
 <div class="card">
 <h2>🎚 功能开关</h2>

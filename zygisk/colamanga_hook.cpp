@@ -114,16 +114,27 @@ static long hook_ptrace(int request, pid_t pid, void* addr, void* data) {
     return ((ptrace_t)tramp_ptrace)(request, pid, addr, data);
 }
 
-// openat（隐藏 root/xposed/frida 文件）
+// openat（隐藏 root/xposed/frida 文件 + 文件沙箱）
 typedef int (*openat_t)(int, const char*, int, ...);
 static int hook_openat(int dirfd, const char* path, int flags, ...) {
     if (path) {
+        // 隐藏 root/xposed/frida 痕迹
         if (strstr(path, "magisk") || strstr(path, "/su") || strstr(path, "supersu") ||
             strstr(path, "kernelsu") || strstr(path, "/ksu") || strstr(path, "apatch") ||
             strstr(path, "xposed") || strstr(path, "lsposed") || strstr(path, "riru") ||
             strstr(path, "zygisk") || strstr(path, "frida") || strstr(path, "/sbin/.magisk")) {
             errno = ENOENT;
             return -1;
+        }
+        // 文件沙箱：拦 /proc/ 下其他进程（排除 self/thread-self 及系统信息文件）
+        // 漫城读 /proc/<pid>/cmdline、/proc/<pid>/maps 等 = 扫描检测，直接让它看不到
+        if (strncmp(path, "/proc/", 6) == 0) {
+            const char* rest = path + 6;
+            if (rest[0] >= '0' && rest[0] <= '9') {
+                // 排除 /proc/self（实际是 /proc/self 不是数字）
+                errno = ENOENT;
+                return -1;
+            }
         }
     }
     mode_t mode = 0;
