@@ -278,7 +278,7 @@ JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     if (isTarget) {
         LOGI("Target process detected: %s — installing inline hooks", cmd);
         // 确保 logs 目录存在
-        mkdir("/data/adb/colamanga_mod/logs", 0755);
+        mkdir("/data/adb/modules/colamanga_mod/logs", 0755);
         install_all_hooks();
     } else {
         // 非目标进程，不做任何 hook

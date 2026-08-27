@@ -1,7 +1,7 @@
 #!/system/bin/sh
 # ====== Colamanga 破甲模块 - 控制脚本 ======
 # 被 WebUI 调用执行命令（通过 AndroidInterface/ksu exec）
-MODDIR=/data/adb/colamanga_mod
+MODDIR=/data/adb/modules/colamanga_mod
 CONF=$MODDIR/config
 SETTINGS=$CONF/settings.conf
 ACTIVE=$CONF/active_profile

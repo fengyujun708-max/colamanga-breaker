@@ -43,10 +43,14 @@ EOF
 # 初始化设备身份（持久化，首次安装生成）
 [ -f "$MODDIR/config/active_profile" ] || echo "profile_xiaomi" > "$MODDIR/config/active_profile"
 
-# 权限
-set_perm_recursive "$MODDIR" 0 0 0755 0644
-set_perm "$MODDIR/service.sh" 0 0 0755
-set_perm "$MODDIR/post-fs-data.sh" 0 0 0755
+# 权限（关键：frida-server 和所有脚本需要可执行）
+set_perm_recursive "$MODPATH" 0 0 0755 0644
+set_perm "$MODPATH/service.sh" 0 0 0755
+set_perm "$MODPATH/post-fs-data.sh" 0 0 0755
+set_perm "$MODPATH/customize.sh" 0 0 0755
+set_perm "$MODPATH/uninstall.sh" 0 0 0755
+set_perm "$MODPATH/control/control.sh" 0 0 0755
+[ -f "$MODPATH/frida/frida-server" ] && set_perm "$MODPATH/frida/frida-server" 0 0 0755
 
 ui_print "✓ 模块安装完成"
 ui_print "✓ 默认设备方案: Xiaomi Redmi Note 12 Pro"

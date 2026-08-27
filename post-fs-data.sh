@@ -3,7 +3,7 @@
 # post-fs-data.sh 在 zygote 启动前执行
 # 仅设置最关键的早期属性（完整属性在 service.sh 中设置）
 
-MODDIR=/data/adb/colamanga_mod
+MODDIR=/data/adb/modules/colamanga_mod
 CONF=$MODDIR/config
 ACTIVE=$CONF/active_profile
 PROFILES=$CONF/fake_device.conf

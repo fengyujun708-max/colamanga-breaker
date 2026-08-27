@@ -3,7 +3,7 @@
 # 功能：读取配置 → resetprop 全套属性(可选) → 启动日志监控 → 启动抓包
 # 设计原则：默认只影响 colamanga(Zygisk per-process)，全局 resetprop 需手动开启
 
-MODDIR=/data/adb/colamanga_mod
+MODDIR=/data/adb/modules/colamanga_mod
 CONF=$MODDIR/config
 LOGS=$MODDIR/logs
 RUN=$MODDIR/run
@@ -99,7 +99,7 @@ if [ "$CAP" = "1" ]; then
                 UID=$(awk "/^Uid/{print \$2}" /proc/$PID/status 2>/dev/null)
                 [ -z "$UID" ] && continue
                 TS=$(date "+%H:%M:%S")
-                cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk -v u=$UID -v t=$TS "{if(\$8==u && \$4!=\"0A\") print t, \$2, \$3, \$4}" >> /data/adb/colamanga_mod/logs/network.log 2>/dev/null
+                cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk -v u=$UID -v t=$TS "{if(\$8==u && \$4!=\"0A\") print t, \$2, \$3, \$4}" >> /data/adb/modules/colamanga_mod/logs/network.log 2>/dev/null
             done
             sleep 2
         done

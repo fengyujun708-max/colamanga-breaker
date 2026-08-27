@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ====== Colamanga 破甲模块 - 卸载清理 ======
-MODDIR=/data/adb/colamanga_mod
+MODDIR=/data/adb/modules/colamanga_mod
 # 停止后台服务
 for pidfile in "$MODDIR/run/"*.pid; do
   [ -f "$pidfile" ] && kill "$(cat "$pidfile")" 2>/dev/null
