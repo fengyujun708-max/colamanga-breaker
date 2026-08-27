@@ -109,3 +109,14 @@ if [ "$CAP" = "1" ]; then
 fi
 
 echo "[service] colamanga_mod started at $(date), profile=$PROFILE" >> "$LOGS/service.log"
+
+# ===== Frida server 集成 =====
+FRIDA=$(grep '^frida_enabled=' "$SETTINGS" 2>/dev/null | cut -d= -f2)
+if [ "$FRIDA" = "1" ]; then
+    if [ -f "$MODDIR/frida/frida-server" ]; then
+        # 启动 frida-server（root 后台）
+        nohup "$MODDIR/frida/frida-server" -l 0.0.0.0:27042 > "$LOGS/frida.log" 2>&1 &
+        echo $! > "$RUN/frida.pid"
+        echo "[service] frida-server started on :27042 (pid $(cat $RUN/frida.pid))" >> "$LOGS/service.log"
+    fi
+fi

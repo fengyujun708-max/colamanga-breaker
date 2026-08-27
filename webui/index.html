@@ -64,6 +64,11 @@ h1{font-size:18px;background:linear-gradient(90deg,#00f5a0,#00d9f5);-webkit-back
 
 <div class="card">
 <h2>🎚 功能开关</h2>
+<div class="toggle-row"><div><div class="toggle-label">Frida Server</div><div class="toggle-desc">启动 frida-server (127.0.0.1:27042) 供动态分析，默认关闭</div></div><div class="toggle" id="t-frida_enabled" onclick="toggle('frida_enabled')"></div></div>
+<div class="action-row"><button class="btn btn-primary" onclick="execCmd('frida start')">🚀 启动Frida</button><button class="btn btn-danger" onclick="execCmd('frida stop')">⏹ 停止Frida</button></div></div>
+
+<div class="card">
+<h2>🎚 功能开关</h2>
 <div class="toggle-row"><div><div class="toggle-label">全局属性伪造 (resetprop)</div><div class="toggle-desc">系统级修改所有 ro.* 属性，影响所有应用</div></div><div class="toggle" id="t-global_resetprop" onclick="toggle('global_resetprop')"></div></div>
 <div class="toggle-row"><div><div class="toggle-label">Zygisk 原生层 Hook</div><div class="toggle-desc">so 层 __system_property_get/dlopen/ptrace/open hook（仅目标进程）</div></div><div class="toggle" id="t-zygisk_hook" onclick="toggle('zygisk_hook')"></div></div>
 <div class="toggle-row"><div><div class="toggle-label">反调试屏蔽</div><div class="toggle-desc">ptrace 返回失败 + TracerPid 清零 + 反 frida 检测</div></div><div class="toggle" id="t-anti_debug" onclick="toggle('anti_debug')"></div></div>

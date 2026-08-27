@@ -35,6 +35,7 @@ app_log_monitor=1
 signature_bypass=1
 persistent_identity=1
 identity_mode=locked
+frida_enabled=0
 target_packages=com.hswl.car_owner,com.hswl.cargo_owner.cargo_owner
 webui_port=8799
 EOF
