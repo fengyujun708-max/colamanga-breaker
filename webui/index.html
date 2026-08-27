@@ -2,262 +2,70 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Colamanga Ultimate Breaker</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Colamanga Breaker</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0e17;color:#e0e0e0;padding:12px;max-width:900px;margin:0 auto}
-h1{font-size:18px;background:linear-gradient(90deg,#00f5a0,#00d9f5);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:4px}
-.subtitle{font-size:11px;color:#666;margin-bottom:12px}
-.card{background:#131722;border:1px solid #1e2536;border-radius:8px;padding:12px;margin-bottom:10px}
-.card h2{font-size:14px;color:#00d9f5;margin-bottom:8px;display:flex;align-items:center;gap:6px}
-.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-.dot-green{background:#00f5a0;box-shadow:0 0 6px #00f5a0}
-.dot-red{background:#ff4757;box-shadow:0 0 6px #ff4757}
-.dot-yellow{background:#ffa502;box-shadow:0 0 6px #ffa502}
-.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #1e2536}
-.toggle-row:last-child{border:0}
-.toggle-label{font-size:13px}
-.toggle-desc{font-size:10px;color:#555;margin-top:2px}
-.toggle{position:relative;width:44px;height:24px;background:#2a2f3e;border-radius:12px;cursor:pointer;transition:.3s;flex-shrink:0}
-.toggle.on{background:#00d9f5}
-.toggle::after{content:'';position:absolute;width:18px;height:18px;background:#e0e0e0;border-radius:50%;top:3px;left:3px;transition:.3s}
-.toggle.on::after{transform:translateX(20px);background:#fff}
-.btn{padding:6px 14px;border:0;border-radius:6px;font-size:12px;cursor:pointer;transition:.2s}
-.btn-primary{background:#00d9f5;color:#000}
-.btn-warn{background:#ffa502;color:#000}
-.btn-danger{background:#ff4757;color:#fff}
-.btn-ghost{background:#2a2f3e;color:#aaa;border:1px solid #3a3f4e}
-.btn:active{transform:scale(.95)}
-.profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
-.profile-card{background:#1a1f2e;border:1px solid #2a2f3e;border-radius:6px;padding:8px;cursor:pointer;text-align:center}
-.profile-card.active{border-color:#00d9f5;background:#0d1a2a}
-.profile-card .name{font-size:12px;font-weight:bold}
-.profile-card .model{font-size:10px;color:#666;margin-top:2px}
-.log-box{background:#0a0e17;border:1px solid #1e2536;border-radius:6px;padding:8px;font-family:monospace;font-size:10px;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
-.log-box::-webkit-scrollbar{width:4px}
-.log-box::-webkit-scrollbar-thumb{background:#333;border-radius:2px}
-.tab-bar{display:flex;gap:4px;margin-bottom:6px}
-.tab{padding:4px 12px;font-size:11px;border-radius:6px;cursor:pointer;background:#1a1f2e;border:1px solid #2a2f3e}
-.tab.active{background:#00d9f5;color:#000}
-.info-row{display:flex;justify-content:space-between;font-size:11px;padding:3px 0;color:#888}
-.info-row span:last-child{color:#00f5a0}
-.action-row{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+body{font-family:sans-serif;background:#0a0e17;color:#e0e0e0;padding:8px}
+h1{font-size:16px;color:#00d9f5;margin-bottom:4px}
+.sub{font-size:10px;color:#555;margin-bottom:8px}
+.c{background:#131722;border:1px solid #1e2536;border-radius:6px;padding:8px;margin-bottom:8px}
+.c h2{font-size:13px;color:#00d9f5;margin-bottom:6px}
+.btn{display:inline-block;padding:5px 10px;margin:2px;border:0;border-radius:4px;font-size:11px;cursor:pointer;text-decoration:none}
+.b1{background:#00d9f5;color:#000}.b2{background:#ffa502;color:#000}.b3{background:#ff4757;color:#fff}.b4{background:#2a2f3e;color:#aaa;border:1px solid #3a3f4e}
+pre{background:#0a0e17;border:1px solid #1e2536;border-radius:4px;padding:6px;font-size:10px;max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-all;color:#0f0}
+iframe{width:100%;height:200px;border:1px solid #1e2536;border-radius:4px;background:#0a0e17}
 </style>
 </head>
 <body>
-<h1>⚡ Colamanga Ultimate Breaker</h1>
-<div class="subtitle" id="version">v1.0.0 · 宇宙无敌破甲模块 · 目标: com.hswl.car_owner / com.hswl.cargo_owner.cargo_owner</div>
+<h1>⚡ Colamanga Breaker</h1>
+<div class="sub">v1.0.0 · com.hswl.car_owner / com.hswl.cargo_owner.cargo_owner</div>
 
-<div class="card">
-<h2><span class="status-dot" id="status-dot"></span> 模块状态</h2>
-<div class="info-row"><span>目标进程 PID</span><span id="pid">未运行</span></div>
-<div class="info-row"><span>当前设备方案</span><span id="profile">--</span></div>
-<div class="info-row"><span>身份模式</span><span id="idmode">--</span></div>
-<div class="info-row"><span>注入状态</span><span id="inject">--</span></div>
-<div class="action-row">
-<button class="btn btn-ghost" onclick="refresh()">🔄 刷新</button>
-<button class="btn btn-warn" onclick="killApp()">⏹ 强制停止漫城</button>
-<button class="btn btn-primary" onclick="execCmd('status')">诊断</button>
-</div>
+<div class="c">
+<h2>🔧 控制</h2>
+<a class="btn b1" href="/api/diagnosis" target="r">🔍 诊断</a>
+<a class="btn b4" href="/api/status" target="r">📊 状态</a>
+<a class="btn b4" href="/api/get_props" target="r">📋 属性</a>
+<a class="btn b4" href="/api/connections" target="r">🌐 连接</a>
+<a class="btn b2" href="/api/kill_app" target="r">⏹ 停止漫城</a>
 </div>
 
-<div class="card">
-<h2>🎚 功能开关</h2>
-<div class="toggle-row"><div><div class="toggle-label">Frida Server</div><div class="toggle-desc">启动 frida-server (127.0.0.1:27042) 供动态分析，默认关闭</div></div><div class="toggle" id="t-frida_enabled" onclick="toggle('frida_enabled')"></div></div>
-<div class="action-row"><button class="btn btn-primary" onclick="execCmd('frida start')">🚀 启动Frida</button><button class="btn btn-danger" onclick="execCmd('frida stop')">⏹ 停止Frida</button></div>
-<div style="font-size:10px;color:#666;margin-top:6px">电脑连接: <b>frida -H 127.0.0.1:27042 -f com.hswl.cargo_owner.cargo_owner -l hook.js</b>（手机需 adb forward 或同网段）</div></div>
-
-<div class="card">
-<h2>💉 自定义 Hook 脚本（Frida）</h2>
-<div style="font-size:11px;color:#888;margin-bottom:6px">可视化注入任意 Java/native 方法。脚本保存到模块目录，电脑 frida attach 后加载。</div>
-<div class="log-box" id="frida-script" style="min-height:120px">// 示例: hook Java 方法
-Java.perform(function(){
-    var Build = Java.use('android.os.Build');
-    Build.SERIAL.value = 'RMU48KXQN12PZ7C9';
-    console.log('Build.SERIAL 已伪造');
-});
-</div>
-<div class="action-row">
-<button class="btn btn-ghost" onclick="execCmd('log frida')">查看frida日志</button>
-</div></div>
-
-<div class="card">
-<h2>🎚 功能开关</h2>
-<div class="toggle-row"><div><div class="toggle-label">全局属性伪造 (resetprop)</div><div class="toggle-desc">系统级修改所有 ro.* 属性，影响所有应用</div></div><div class="toggle" id="t-global_resetprop" onclick="toggle('global_resetprop')"></div></div>
-<div class="toggle-row"><div><div class="toggle-label">Zygisk 原生层 Hook</div><div class="toggle-desc">so 层 __system_property_get/dlopen/ptrace/open hook（仅目标进程）</div></div><div class="toggle" id="t-zygisk_hook" onclick="toggle('zygisk_hook')"></div></div>
-<div class="toggle-row"><div><div class="toggle-label">反调试屏蔽</div><div class="toggle-desc">ptrace 返回失败 + TracerPid 清零 + 反 frida 检测</div></div><div class="toggle" id="t-anti_debug" onclick="toggle('anti_debug')"></div></div>
-<div class="toggle-row"><div><div class="toggle-label">Root 隐藏</div><div class="toggle-desc">隐藏 su/magisk/zygisk 痕迹（仅目标进程）</div></div><div class="toggle" id="t-hide_root" onclick="toggle('hide_root')"></div></div>
-<div class="toggle-row"><div><div class="toggle-label">Xposed/LSPosed 隐藏</div><div class="toggle-desc">隐藏 LSPosed 注入痕迹（maps/文件/类）</div></div><div class="toggle" id="t-hide_xposed" onclick="toggle('hide_xposed')"></div></div>
-<div class="toggle-row"><div><div class="toggle-label">超级抓包</div><div class="toggle-desc">记录所有网络连接 + DNS + 请求 URL（仅目标进程）</div></div><div class="toggle" id="t-packet_capture" onclick="toggle('packet_capture')"></div></div>
-<div class="toggle-row"><div><div class="toggle-label">应用日志监控</div><div class="toggle-desc">实时记录漫城 logcat（设备/广告/解锁相关）</div></div><div class="toggle" id="t-app_log_monitor" onclick="toggle('app_log_monitor')"></div></div>
-<div class="toggle-row"><div><div class="toggle-label">签名校验绕过</div><div class="toggle-desc">hook PackageManager/Signature 返回原始签名</div></div><div class="toggle" id="t-signature_bypass" onclick="toggle('signature_bypass')"></div></div>
-<div class="toggle-row"><div><div class="toggle-label">身份持久化锁定</div><div class="toggle-desc">锁定设备指纹不变，防止广告因设备变化而重置</div></div><div class="toggle" id="t-persistent_identity" onclick="toggle('persistent_identity')"></div></div>
+<div class="c">
+<h2>📱 设备身份</h2>
+<a class="btn b4" href="/api/set_profile/profile_xiaomi" target="r">小米</a>
+<a class="btn b4" href="/api/set_profile/profile_oneplus" target="r">一加</a>
+<a class="btn b4" href="/api/set_profile/profile_oppo" target="r">OPPO</a>
+<a class="btn b2" href="/api/randomize" target="r">🎲 随机</a>
+<a class="btn b4" href="/api/toggle/global_resetprop" target="r">全局属性</a>
 </div>
 
-<div class="card">
-<h2>📱 设备身份管理</h2>
-<div style="font-size:11px;color:#888;margin-bottom:6px">模式: <b id="identity_mode_label">--</b> · 锁定=持久固定身份(防广告重置) · 随机=每次新设备</div>
-<div class="profile-grid">
-<div class="profile-card" id="p-profile_xiaomi" onclick="setProfile('profile_xiaomi')"><div class="name">小米 Redmi</div><div class="model">2201123C · socrates</div></div>
-<div class="profile-card" id="p-profile_oneplus" onclick="setProfile('profile_oneplus')"><div class="name">一加 9RT</div><div class="model">MT2110 · qcom</div></div>
-<div class="profile-card" id="p-profile_oppo" onclick="setProfile('profile_oppo')"><div class="name">OPPO Reno8</div><div class="model">PGZ110 · mt6893</div></div>
-<div class="profile-card" onclick="randomize()" style="border-color:#ffa502"><div class="name">🎲 随机生成</div><div class="model">全新身份</div></div>
-</div>
-<div class="action-row">
-<button class="btn btn-ghost" onclick="execCmd('get_props')">查看当前属性</button>
-<button class="btn btn-ghost" onclick="execCmd('connections')">查看网络连接</button>
-</div>
+<div class="c">
+<h2>🛡 保护</h2>
+<a class="btn b4" href="/api/snapshot" target="r">📸 快照</a>
+<a class="btn b2" href="/api/restore" target="r">♻️ 恢复</a>
+<a class="btn b3" href="/api/safe_mode/on" target="r">🛑 安全模式</a>
+<a class="btn b4" href="/api/safe_mode/off" target="r">✅ 恢复Hook</a>
 </div>
 
-<div class="card">
-<h2>📊 实时日志</h2>
-<div class="tab-bar">
-<div class="tab active" onclick="switchLog('app')">应用日志</div>
-<div class="tab" onclick="switchLog('net')">网络抓包</div>
-<div class="tab" onclick="switchLog('service')">模块日志</div>
-<div class="tab" onclick="switchLog('boot')">启动日志</div>
-</div>
-<div class="log-box" id="log-box">点击刷新查看日志...</div>
-<div class="action-row">
-<button class="btn btn-ghost" onclick="loadLog()">🔄 刷新</button>
-<button class="btn btn-danger" onclick="clearLog()">🗑 清空</button>
-<button class="btn btn-ghost" onclick="autoRefresh()">⏱ 自动刷新</button>
-</div>
+<div class="c">
+<h2>🔌 Frida</h2>
+<a class="btn b1" href="/api/frida/start" target="r">🚀 启动</a>
+<a class="btn b3" href="/api/frida/stop" target="r">⏹ 停止</a>
+<a class="btn b4" href="/api/frida/status" target="r">📊 状态</a>
 </div>
 
-<div class="card">
-<h2>🔍 当前真实设备属性</h2>
-<div id="props-box" style="font-family:monospace;font-size:10px;color:#888">点击"查看当前属性"按钮...</div>
+<div class="c">
+<h2>📊 日志</h2>
+<a class="btn b4" href="/api/log/app/50" target="r">应用</a>
+<a class="btn b4" href="/api/log/net/50" target="r">网络</a>
+<a class="btn b4" href="/api/log/service/50" target="r">模块</a>
+<a class="btn b3" href="/api/clear_log/app" target="r">🗑 清应用</a>
+<a class="btn b3" href="/api/clear_log/net" target="r">🗑 清网络</a>
 </div>
 
-<div class="card">
-<h2>📡 API 导出与诊断</h2>
-<div style="font-size:11px;color:#888;margin-bottom:6px">一键导出漫城所有 API 接口 + 加密密钥 + 爬虫信息</div>
-<div class="action-row">
-<button class="btn btn-primary" onclick="execCmd('export_api')">📤 导出所有 API</button>
-<button class="btn btn-ghost" onclick="showDiag()">🔍 一键诊断</button>
-<button class="btn btn-ghost" onclick="execCmd('snapshot')">📸 快照广告数据</button>
-<button class="btn btn-warn" onclick="execCmd('restore')">♻️ 恢复快照</button>
-<button class="btn btn-danger" onclick="execCmd('safe_mode on')">🛑 安全模式</button>
-<button class="btn btn-ghost" onclick="execCmd('safe_mode off')">✅ 恢复Hook</button>
+<div class="c">
+<h2>📤 结果</h2>
+<iframe name="r" src="/api/diagnosis"></iframe>
 </div>
-<div class="log-box" id="diag-box" style="display:none;min-height:150px">诊断中...</div>
-</div>
-
-<div class="card">
-<h2>🛡 保护与恢复</h2>
-<div style="font-size:11px;color:#888;margin-bottom:6px">广告数据快照防重置 / 诊断 / 安全模式</div>
-<div class="action-row">
-<button class="btn btn-primary" onclick="showDiag()">🔍 一键诊断</button>
-<button class="btn btn-ghost" onclick="execCmd('snapshot')">📸 快照广告数据</button>
-<button class="btn btn-warn" onclick="execCmd('restore')">♻️ 恢复快照</button>
-<button class="btn btn-danger" onclick="execCmd('safe_mode on')">🛑 安全模式</button>
-<button class="btn btn-ghost" onclick="execCmd('safe_mode off')">✅ 恢复Hook</button>
-</div>
-<div class="log-box" id="diag-box" style="display:none;min-height:150px">诊断中...</div>
-</div>
-
-<script>
-var MODDIR='/data/adb/modules/colamanga_mod';
-var currentLog='app';
-var autoTimer=null;
-
-// ===== Shell 执行（兼容 Magisk/KSU/MMRL）=====
-function exec(cmd){
-  try{ if(typeof AndroidInterface!=='undefined'&&AndroidInterface.exec) return AndroidInterface.exec(cmd); }catch(e){}
-  try{ if(typeof ksu!=='undefined'&&ksu.exec) return ksu.exec(cmd); }catch(e){}
-  try{ if(typeof mmrl!=='undefined'&&mmrl.exec) return mmrl.exec(cmd); }catch(e){}
-  return '{"error":"no shell interface"}';
-}
-
-function execCmd(sub){
-  var r=exec('sh '+MODDIR+'/control/control.sh '+sub);
-  try{ return JSON.parse(r); }catch(e){ return r; }
-}
-
-// ===== 初始化 =====
-function refresh(){
-  var s=execCmd('status');
-  if(typeof s==='string'){ document.getElementById('status-dot').className='status-dot dot-red'; return; }
-  var pid=s.pid1||s.pid2||'';
-  document.getElementById('pid').textContent=pid?'运行中 ('+pid+')':'未运行';
-  document.getElementById('status-dot').className='status-dot '+(pid?'dot-green':'dot-red');
-  document.getElementById('profile').textContent=s.profile||'--';
-  document.getElementById('idmode').textContent=s.identity_mode||'--';
-  document.getElementById('identity_mode_label').textContent=s.identity_mode||'--';
-  document.getElementById('inject').textContent=s.zygisk=='1'?'Zygisk已启用':'未启用';
-
-  var toggles=['global_resetprop','zygisk_hook','anti_debug','hide_root','hide_xposed','packet_capture','app_log_monitor','signature_bypass','persistent_identity'];
-  toggles.forEach(function(k){
-    var el=document.getElementById('t-'+k);
-    if(el){ var val=s[k]!==undefined?s[k]:'0'; el.className='toggle'+(val=='1'?' on':''); }
-  });
-  // 高亮当前方案
-  ['profile_xiaomi','profile_oneplus','profile_oppo'].forEach(function(p){
-    var el=document.getElementById('p-'+p);
-    if(el) el.className='profile-card'+(p==s.profile?' active':'');
-  });
-}
-
-function toggle(key){
-  var r=execCmd('toggle '+key);
-  refresh();
-}
-
-function setProfile(name){
-  execCmd('set_profile '+name);
-  refresh();
-}
-
-function randomize(){
-  execCmd('randomize');
-  setTimeout(refresh,500);
-}
-
-function killApp(){
-  execCmd('kill_app');
-  setTimeout(refresh,1000);
-}
-
-// ===== 日志 =====
-function switchLog(type){ currentLog=type; document.querySelectorAll('.tab').forEach(function(t){t.className='tab'}); event.target.className='tab active'; loadLog(); }
-function loadLog(){
-  var r=exec('sh '+MODDIR+'/control/control.sh log '+currentLog+' 80');
-  document.getElementById('log-box').textContent=r||'(空)';
-}
-function clearLog(){ execCmd('clear_log '+currentLog); loadLog(); }
-function autoRefresh(){
-  if(autoTimer){ clearInterval(autoTimer); autoTimer=null; alert('自动刷新已关闭'); return; }
-  autoTimer=setInterval(loadLog,3000);
-  loadLog();
-  alert('自动刷新已开启(3秒)');
-}
-
-// ===== 属性查看 =====
-function loadProps(){
-  var r=exec('sh '+MODDIR+'/control/control.sh get_props');
-  document.getElementById('props-box').textContent=r;
-}
-
-// 覆盖 execCmd 以支持不同返回
-function execCmd(sub){
-  var r=exec('sh '+MODDIR+'/control/control.sh '+sub);
-  try{ return JSON.parse(r); }catch(e){ return r; }
-}
-
-// 初始加载
-refresh();
-loadLog();
-
-// 诊断
-function showDiag(){
-  var box=document.getElementById('diag-box');
-  box.style.display='block';
-  box.textContent='诊断中...';
-  var r=exec('sh '+MODDIR+'/control/control.sh diagnosis');
-  box.textContent=r||'(无输出)';
-}
-</script>
 </body>
 </html>

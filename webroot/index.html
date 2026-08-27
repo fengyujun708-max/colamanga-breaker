@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Colamanga Breaker</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:sans-serif;background:#0a0e17;color:#e0e0e0;padding:8px;max-width:900px;margin:0 auto}
+h1{font-size:16px;color:#00d9f5;margin-bottom:4px}
+.sub{font-size:10px;color:#555;margin-bottom:8px}
+.c{background:#131722;border:1px solid #1e2536;border-radius:6px;padding:8px;margin-bottom:8px}
+.c h2{font-size:13px;color:#00d9f5;margin-bottom:6px}
+.btn{display:inline-block;padding:5px 10px;margin:2px;border:0;border-radius:4px;font-size:11px;cursor:pointer;text-decoration:none}
+.b1{background:#00d9f5;color:#000}.b2{background:#ffa502;color:#000}.b3{background:#ff4757;color:#fff}.b4{background:#2a2f3e;color:#aaa;border:1px solid #3a3f4e}
+.info-row{display:flex;justify-content:space-between;font-size:11px;padding:3px 0;color:#888}
+.info-row span:last-child{color:#00f5a0}
+.out{background:#0a0e17;border:1px solid #1e2536;border-radius:4px;padding:6px;font-family:monospace;font-size:10px;max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-all;color:#0f0;margin-top:6px}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+.g{background:#00f5a0}.r{background:#ff4757}
+.tg{position:relative;width:40px;height:22px;background:#2a2f3e;border-radius:11px;cursor:pointer;flex-shrink:0;display:inline-block}
+.tg.on{background:#00d9f5}
+.tg::after{content:'';position:absolute;width:16px;height:16px;background:#e0e0e0;border-radius:50%;top:3px;left:3px;transition:.3s}
+.tg.on::after{transform:translateX(18px);background:#fff}
+.tr{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1e2536}
+.tr:last-child{border:0}
+.tl{font-size:12px}
+</style>
+</head>
+<body>
+<h1>⚡ Colamanga Breaker</h1>
+<div class="sub">v1.0.0 · com.hswl.car_owner / com.hswl.cargo_owner.cargo_owner</div>
+
+<div class="c">
+<h2><span class="dot r" id="sd"></span> 状态</h2>
+<div class="info-row"><span>PID</span><span id="pid">--</span></div>
+<div class="info-row"><span>设备方案</span><span id="prof">--</span></div>
+<div class="info-row"><span>身份模式</span><span id="mode">--</span></div>
+<div class="info-row"><span>桥接</span><span id="bridge">--</span></div>
+</div>
+
+<div class="c">
+<h2>🔧 控制</h2>
+<button class="btn b1" onclick="run('diagnosis')">🔍 诊断</button>
+<button class="btn b4" onclick="run('status')">📊 状态</button>
+<button class="btn b4" onclick="run('get_props')">📋 属性</button>
+<button class="btn b4" onclick="run('connections')">🌐 连接</button>
+<button class="btn b2" onclick="run('kill_app')">⏹ 停止漫城</button>
+</div>
+
+<div class="c">
+<h2>📱 设备身份</h2>
+<button class="btn b4" onclick="run('set_profile profile_xiaomi')">小米</button>
+<button class="btn b4" onclick="run('set_profile profile_oneplus')">一加</button>
+<button class="btn b4" onclick="run('set_profile profile_oppo')">OPPO</button>
+<button class="btn b2" onclick="run('randomize')">🎲 随机</button>
+</div>
+
+<div class="c">
+<h2>🎚 开关</h2>
+<div id="toggles"></div>
+</div>
+
+<div class="c">
+<h2>🛡 保护</h2>
+<button class="btn b4" onclick="run('snapshot')">📸 快照</button>
+<button class="btn b2" onclick="run('restore')">♻️ 恢复</button>
+<button class="btn b3" onclick="run('safe_mode on')">🛑 安全模式</button>
+<button class="btn b4" onclick="run('safe_mode off')">✅ 恢复Hook</button>
+</div>
+
+<div class="c">
+<h2>🔌 Frida</h2>
+<button class="btn b1" onclick="run('frida start')">🚀 启动</button>
+<button class="btn b3" onclick="run('frida stop')">⏹ 停止</button>
+<button class="btn b4" onclick="run('frida status')">📊 状态</button>
+</div>
+
+<div class="c">
+<h2>📊 日志</h2>
+<button class="btn b4" onclick="run('log app 50')">应用</button>
+<button class="btn b4" onclick="run('log net 50')">网络</button>
+<button class="btn b4" onclick="run('log service 50')">模块</button>
+<button class="btn b3" onclick="run('clear_log app')">🗑 清应用</button>
+<button class="btn b3" onclick="run('clear_log net')">🗑 清网络</button>
+</div>
+
+<div class="c">
+<h2>📤 输出</h2>
+<div class="out" id="out">点击任意按钮执行命令...</div>
+</div>
+
+<script>
+var MOD='/data/adb/modules/colamanga_mod';
+var CTL=MOD+'/control/control.sh';
+
+function exec(cmd,cb){
+  if(window.ksu&&window.ksu.exec){
+    var cbn='cb'+Math.random().toString(36).slice(2);
+    window[cbn]=function(errno,stdout,stderr){
+      delete window[cbn];
+      cb(stdout||stderr||'(空)',errno);
+    };
+    window.ksu.exec('sh '+CTL+' '+cmd,'{}',cbn);
+  }else if(window.fetch){
+    fetch('/api/'+cmd).then(function(r){return r.text()}).then(function(t){cb(t,0)}).catch(function(e){cb('错误:'+e,-1)});
+  }else{
+    cb('无桥接(需KSU WebUI或浏览器127.0.0.1:8799)',-1);
+  }
+}
+
+function run(cmd){
+  var el=document.getElementById('out');
+  el.textContent='执行中: '+cmd+'...';
+  exec(cmd,function(r,err){
+    el.textContent=r;
+    if(cmd==='status')updateStatus(r);
+    if(cmd==='diagnosis')el.textContent=r;
+  });
+}
+
+function updateStatus(json){
+  try{
+    var d=JSON.parse(json);
+    var pid=d.pid1||d.pid2||'';
+    document.getElementById('pid').textContent=pid?('运行 '+pid):'未运行';
+    document.getElementById('sd').className='dot '+(pid?'g':'r');
+    document.getElementById('prof').textContent=d.profile||'--';
+    document.getElementById('mode').textContent=d.identity_mode||'--';
+    var keys=['global_resetprop','zygisk_hook','anti_debug','hide_root','hide_xposed','packet_capture','app_log_monitor','signature_bypass','persistent_identity'];
+    var names={global_resetprop:'全局属性',zygisk_hook:'原生Hook',anti_debug:'反调试',hide_root:'Root隐藏',hide_xposed:'Xposed隐藏',packet_capture:'抓包',app_log_monitor:'日志监控',signature_bypass:'签名绕过',persistent_identity:'身份锁定'};
+    var h='';
+    keys.forEach(function(k){
+      var v=d[k]!==undefined?d[k]:'0';
+      h+='<div class="tr"><span class="tl">'+(names[k]||k)+'</span><span class="tg'+(v=='1'?' on':'')+'" onclick="run(\'toggle '+k+'\')"></span></div>';
+    });
+    document.getElementById('toggles').innerHTML=h;
+  }catch(e){}
+}
+
+function init(){
+  var b=document.getElementById('bridge');
+  if(window.ksu&&window.ksu.exec){b.textContent='KSU WebUI ✅';b.style.color='#00f5a0';}
+  else if(window.fetch){b.textContent='浏览器(需8799端口)';b.style.color='#ffa502';}
+  else{b.textContent='无桥接';b.style.color='#ff4757';}
+  run('status');
+}
+init();
+</script>
+</body>
+</html>
