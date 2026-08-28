@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Colamanga Breaker</title>
+<title>Colamanga Breaker v3</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:sans-serif;background:#0a0e17;color:#e0e0e0;padding:8px}
+body{font-family:sans-serif;background:#0a0e17;color:#e0e0e0;padding:8px;padding-bottom:24px}
 h1{font-size:16px;color:#00d9f5;margin-bottom:4px}
 .sub{font-size:10px;color:#555;margin-bottom:8px}
 .c{background:#131722;border:1px solid #1e2536;border-radius:6px;padding:8px;margin-bottom:8px}
@@ -15,11 +15,30 @@ h1{font-size:16px;color:#00d9f5;margin-bottom:4px}
 .b1{background:#00d9f5;color:#000}.b2{background:#ffa502;color:#000}.b3{background:#ff4757;color:#fff}.b4{background:#2a2f3e;color:#aaa;border:1px solid #3a3f4e}
 pre{background:#0a0e17;border:1px solid #1e2536;border-radius:4px;padding:6px;font-size:10px;max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-all;color:#0f0}
 iframe{width:100%;height:200px;border:1px solid #1e2536;border-radius:4px;background:#0a0e17}
+/* Hook 仪表盘 */
+.hook-grid{display:flex;flex-wrap:wrap;gap:6px}
+.hk{flex:1 1 100%;display:flex;align-items:center;justify-content:space-between;background:#1a2030;border:1px solid #2a3145;border-radius:5px;padding:6px 8px}
+.hk .name{font-size:11px;font-weight:700}
+.hk .desc{font-size:9px;color:#667;margin-top:2px}
+.hk .state{font-size:9px;padding:2px 7px;border-radius:8px;font-weight:700}
+.st-on{background:#064d1f;color:#3df07a}
+.st-off{background:#3a1a1a;color:#ff6b6b}
+.tgl{font-size:11px;padding:3px 9px;border:0;border-radius:4px;cursor:pointer;margin-left:4px}
+.tgl-on{background:#00d9f5;color:#000}
+.tgl-off{background:#ff4757;color:#fff}
+.refresh{font-size:10px;padding:3px 8px;background:#2a2f3e;color:#7f8ea0;border:0;border-radius:4px;cursor:pointer}
 </style>
 </head>
 <body>
-<h1>⚡ Colamanga Breaker</h1>
-<div class="sub">v1.0.0 · com.hswl.car_owner / com.hswl.cargo_owner.cargo_owner</div>
+<h1>⚡ Colamanga Breaker v3</h1>
+<div class="sub">纯 Zygisk 模块 · 系统原生级 · 不依赖 LSPosed</div>
+
+<div class="c">
+<h2>🎯 Hook 仪表盘（实时开关，改配置立即生效）
+  <button class="refresh" onclick="loadHooks()">🔄 刷新</button>
+</h2>
+<div class="hook-grid" id="hooks"><span style="font-size:10px;color:#667">加载中…</span></div>
+</div>
 
 <div class="c">
 <h2>🔧 控制</h2>
@@ -27,6 +46,7 @@ iframe{width:100%;height:200px;border:1px solid #1e2536;border-radius:4px;backgr
 <a class="btn b4" href="/api/status" target="r">📊 状态</a>
 <a class="btn b4" href="/api/get_props" target="r">📋 属性</a>
 <a class="btn b4" href="/api/connections" target="r">🌐 连接</a>
+<a class="btn b4" href="/api/hooks_status" target="r">🧩 Hook状态</a>
 <a class="btn b2" href="/api/kill_app" target="r">⏹ 停止漫城</a>
 </div>
 
@@ -36,11 +56,12 @@ iframe{width:100%;height:200px;border:1px solid #1e2536;border-radius:4px;backgr
 <a class="btn b4" href="/api/set_profile/profile_oneplus" target="r">一加</a>
 <a class="btn b4" href="/api/set_profile/profile_oppo" target="r">OPPO</a>
 <a class="btn b2" href="/api/randomize" target="r">🎲 随机</a>
+<a class="btn b4" href="/api/randomize_device" target="r">✨ 全新设备(免重启)</a>
 <a class="btn b4" href="/api/toggle/global_resetprop" target="r">全局属性</a>
 </div>
 
 <div class="c">
-<h2>🛡 保护</h2>
+<h2>🛡 保护 / 快照</h2>
 <a class="btn b4" href="/api/snapshot" target="r">📸 快照</a>
 <a class="btn b2" href="/api/restore" target="r">♻️ 恢复</a>
 <a class="btn b3" href="/api/safe_mode/on" target="r">🛑 安全模式</a>
@@ -48,10 +69,12 @@ iframe{width:100%;height:200px;border:1px solid #1e2536;border-radius:4px;backgr
 </div>
 
 <div class="c">
-<h2>🔌 Frida</h2>
-<a class="btn b1" href="/api/frida/start" target="r">🚀 启动</a>
+<h2>🔌 Frida / 监控</h2>
+<a class="btn b1" href="/api/frida/start" target="r">🚀 Frida</a>
 <a class="btn b3" href="/api/frida/stop" target="r">⏹ 停止</a>
-<a class="btn b4" href="/api/frida/status" target="r">📊 状态</a>
+<a class="btn b4" href="/api/logmon/start" target="r">📡 日志监控</a>
+<a class="btn b4" href="/api/capture/start" target="r">🌐 抓包</a>
+<a class="btn b3" href="/api/capture/stop" target="r">⏹ 停抓包</a>
 </div>
 
 <div class="c">
@@ -59,13 +82,71 @@ iframe{width:100%;height:200px;border:1px solid #1e2536;border-radius:4px;backgr
 <a class="btn b4" href="/api/log/app/50" target="r">应用</a>
 <a class="btn b4" href="/api/log/net/50" target="r">网络</a>
 <a class="btn b4" href="/api/log/service/50" target="r">模块</a>
-<a class="btn b3" href="/api/clear_log/app" target="r">🗑 清应用</a>
-<a class="btn b3" href="/api/clear_log/net" target="r">🗑 清网络</a>
+<a class="btn b4" href="/api/servers" target="r">🌍 服务器画像</a>
+<a class="btn b3" href="/api/clear_log/all" target="r">🗑 清空</a>
 </div>
 
 <div class="c">
 <h2>📤 结果</h2>
-<iframe name="r" src="/api/diagnosis"></iframe>
+<iframe name="r" src="/api/hooks_status"></iframe>
 </div>
+
+<script>
+var HOOKS=[
+ {k:'hook_property',     n:'属性伪装',        d:'ro.* 假值 (__system_property_get)'},
+ {k:'hook_property_cb',  n:'Java属性回调',    d:'SystemProperties.get 全覆盖'},
+ {k:'hook_ptrace',       n:'反调试',          d:'TRACEME=0 / ATTACH=-1'},
+ {k:'hook_access',       n:'文件隐藏',        d:'access 拦 frida/magisk/xposed'},
+ {k:'hook_open',         n:'文件沙箱(open)',  d:'open 拦敏感路径'},
+ {k:'hook_openat',       n:'文件沙箱(openat)',d:'openat 拦敏感路径'},
+ {k:'hook_stat',         n:'路径枚举隐藏',    d:'stat/lstat/fstatat'},
+ {k:'hook_uname',        n:'内核伪装',        d:'清 KernelSU/Magisk 标记'},
+ {k:'hook_connect',      n:'抓包+反下发',     d:'IP:port 记录 + 阻断风控'},
+ {k:'hook_getaddrinfo',  n:'DNS+反下发',      d:'域名记录 + 阻断风控'},
+ {k:'hook_jni',          n:'JNI设备标识',     d:'IMEI/MAC/Widevine/序列号'},
+ {k:'file_sandbox',      n:'文件沙箱总开关',  d:'阻断其他 app 私有数据'},
+ {k:'hide_maps',         n:'隐藏maps',        d:'掩盖 inline hook trampoline'},
+ {k:'net_blocklist',     n:'反下发阻断',      d:'拒连 blocklist 风控域名'}
+];
+
+function loadHooks(){
+  var el=document.getElementById('hooks');
+  el.innerHTML='<span style="font-size:10px;color:#667">加载中…</span>';
+  fetch('/api/hooks_status').then(function(r){return r.json()}).then(function(data){
+    var conf=data.conf||{};
+    var loaded={};
+    (data.loaded||[]).forEach(function(h){loaded[h.name]=1});
+    var html='';
+    HOOKS.forEach(function(h){
+      var on=conf[h.k]==='1';
+      var isLoaded=!!loaded[h.k];
+      html+='<div class="hk">'+
+        '<div><div class="name">'+h.n+' '+(isLoaded?'<span style="color:#3df07a;font-size:9px">●已加载</span>':'<span style="color:#667;font-size:9px">○未加载(需重启app)</span>')+'</div>'+
+        '<div class="desc">'+h.d+'</div></div>'+
+        '<div><span class="state '+(on?'st-on':'st-off')+'">'+(on?'ON':'OFF')+'</span>'+
+        '<button class="tgl '+(on?'tgl-off':'tgl-on')+'" onclick="toggleHook(\''+h.k+'\',\''+(on?0:1)+'\')">'+(on?'关闭':'开启')+'</button></div>'+
+      '</div>';
+    });
+    el.innerHTML=html;
+  }).catch(function(){
+    el.innerHTML='<span style="font-size:10px;color:#ff6b6b">fetch 不可用（KSU WebUI 限制），请用下方「🧩 Hook状态」按钮在 iframe 查看</span>';
+  });
+}
+
+function toggleHook(k,v){
+  fetch('/api/hooks_toggle/'+k+'/'+v).then(function(r){return r.json()}).then(function(){
+    loadHooks();
+  }).catch(function(){
+    var f=document.createElement('iframe');
+    f.src='/api/hooks_toggle/'+k+'/'+v;
+    f.style.cssText='position:absolute;width:1px;height:1px;opacity:0';
+    document.body.appendChild(f);
+    setTimeout(loadHooks,1200);
+  });
+}
+
+loadHooks();
+setInterval(loadHooks,8000);  // 每 8 秒自动刷新
+</script>
 </body>
 </html>

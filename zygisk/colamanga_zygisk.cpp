@@ -1,5 +1,12 @@
-// colamanga_zygisk.cpp - 纯 Zygisk 模块 v2（修复 trampoline bug + 补全 so 层 hook）
-// 不依赖 LSPosed，native 层 hook libc + JNI 方法
+// colamanga_zygisk.cpp - 纯 Zygisk 模块 v3（高阶可视化 + 自定义 hook 开关 + 文件沙箱 + 反服务器下发）
+// 不依赖 LSPosed，native 层 inline hook + JNI hook
+//
+// 新增能力：
+//   1. hooks.conf 配置驱动——每个 libc hook 独立开关，运行时重读（无需重启）
+//   2. 文件沙箱——open/openat/stat/lstat/fstatat 阻断其他 app 私有数据 + 隐藏 root/frida/zygisk 文件
+//   3. __system_property_read_callback 全覆盖属性伪装（覆盖 Java SystemProperties.get）
+//   4. uname 内核伪装——清除 KernelSU/Magisk 标记
+//   5. 网络阻断（反服务器下发）——connect/getaddrinfo 按 blocklist 拒连风控域名
 #include "zygisk.hpp"
 #include <jni.h>
 #include <cstring>
@@ -11,6 +18,10 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/ptrace.h>
+#include <sys/stat.h>
+#include <sys/utsname.h>
+#include <sys/syscall.h>
+#include <sys/system_properties.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -51,6 +62,83 @@ static char s_line1[32] = "+8613912345678";
 static char s_mac[32] = "A8:63:EA:C6:D2:3E";
 static char s_androidid[32] = "a1b2c3d4e5f6g7h8";
 static char s_widevine[64] = "860f7c5e7fb431bfe5ec828c62a36419";
+
+// ===== hooks.conf 配置（运行时开关）=====
+struct HookCfg {
+    int hook_property     = 1;
+    int hook_property_cb  = 1;
+    int hook_ptrace       = 1;
+    int hook_access       = 1;
+    int hook_open         = 1;
+    int hook_openat       = 1;
+    int hook_stat         = 1;
+    int hook_uname        = 1;
+    int hook_connect      = 1;
+    int hook_getaddrinfo  = 1;
+    int hook_jni          = 1;
+    int file_sandbox      = 1;   // 文件沙箱：阻断其他 app 私有数据
+    int hide_maps         = 1;   // 隐藏 /proc/self/maps（掩盖 inline hook trampoline）
+    int net_blocklist     = 1;   // 反服务器下发：阻断风控域名
+};
+static volatile HookCfg g_cfg;
+static volatile uint32_t g_calls = 0;
+static char g_blocklist[2048];    // 网络阻断域名/IP，逗号或换行分隔
+
+static int conf_get_int(const char* line) {
+    const char* eq = strchr(line, '=');
+    if (!eq) return 1;
+    return atoi(eq + 1) > 0 ? 1 : 0;
+}
+
+// raw syscall 读文件——绕过本模块自己的 openat/open inline hook，避免 read_hooks_conf 递归
+static int raw_read_file(const char* path, char* buf, int maxlen) {
+    int fd = (int)syscall(SYS_openat, AT_FDCWD, path, O_RDONLY, 0);
+    if (fd < 0) return -1;
+    int n = (int)syscall(SYS_read, fd, buf, maxlen - 1);
+    syscall(SYS_close, fd);
+    if (n < 0) return -1;
+    buf[n] = 0;
+    return n;
+}
+
+static void read_hooks_conf() {
+    char buf[4096];
+    if (raw_read_file("/data/adb/modules/colamanga_mod/config/hooks.conf", buf, sizeof(buf)) <= 0) return;
+    char* p = buf;
+    while (p && *p) {
+        char* nl = strchr(p, '\n');
+        if (nl) *nl = 0;
+        if (strchr(p, '=')) {
+            if (!strncmp(p, "hook_property=", 14))        g_cfg.hook_property    = conf_get_int(p);
+            else if (!strncmp(p, "hook_property_cb=", 17)) g_cfg.hook_property_cb = conf_get_int(p);
+            else if (!strncmp(p, "hook_ptrace=", 12))      g_cfg.hook_ptrace      = conf_get_int(p);
+            else if (!strncmp(p, "hook_access=", 12))      g_cfg.hook_access      = conf_get_int(p);
+            else if (!strncmp(p, "hook_open=", 10))        g_cfg.hook_open        = conf_get_int(p);
+            else if (!strncmp(p, "hook_openat=", 12))      g_cfg.hook_openat      = conf_get_int(p);
+            else if (!strncmp(p, "hook_stat=", 10))        g_cfg.hook_stat        = conf_get_int(p);
+            else if (!strncmp(p, "hook_uname=", 11))       g_cfg.hook_uname       = conf_get_int(p);
+            else if (!strncmp(p, "hook_connect=", 13))     g_cfg.hook_connect     = conf_get_int(p);
+            else if (!strncmp(p, "hook_getaddrinfo=", 17)) g_cfg.hook_getaddrinfo = conf_get_int(p);
+            else if (!strncmp(p, "hook_jni=", 9))          g_cfg.hook_jni         = conf_get_int(p);
+            else if (!strncmp(p, "file_sandbox=", 13))     g_cfg.file_sandbox     = conf_get_int(p);
+            else if (!strncmp(p, "hide_maps=", 10))        g_cfg.hide_maps        = conf_get_int(p);
+            else if (!strncmp(p, "net_blocklist=", 14))    g_cfg.net_blocklist    = conf_get_int(p);
+        }
+        if (!nl) break;
+        p = nl + 1;
+    }
+
+    // 网络阻断列表
+    memset(g_blocklist, 0, sizeof(g_blocklist));
+    char bb[2048];
+    int n = raw_read_file("/data/adb/modules/colamanga_mod/config/net_blocklist.txt", bb, sizeof(bb));
+    if (n > 0) strncpy(g_blocklist, bb, sizeof(g_blocklist) - 1);
+}
+
+static inline void maybe_reload() {
+    // 每 256 次调用重读配置，低频 hook（ptrace/access/uname）几乎实时
+    if ((++g_calls & 0xFF) == 0) read_hooks_conf();
+}
 
 static void json_get_str(const char* json, const char* key, char* out, int outlen) {
     const char* k = strstr(json, key);
@@ -97,16 +185,24 @@ static void load_config() {
     json_get_str(json, "android_id", s_androidid, sizeof(s_androidid));
     json_get_str(json, "widevine", s_widevine, sizeof(s_widevine));
     free(json);
-    LOGI("[cfg] %s %s serial=%s imei=%s widevine=%s", s_brand, s_model, s_serialno, s_imei, s_widevine);
+    LOGI("[cfg] %s %s serial=%s imei=%s", s_brand, s_model, s_serialno, s_imei);
 }
 
-// ====== inline hook（多 hook，每个独立 trampoline，修复 trampoline 覆盖 bug）======
+// ====== inline hook（多 hook 独立 trampoline）======
 #define MAX_HOOKS 16
 struct HookEntry { void* target; void* tramp; unsigned char orig[16]; };
 static HookEntry g_hooks[MAX_HOOKS];
 static int g_hook_count = 0;
 
-static void* inline_hook(void* target, void* hook_fn) {
+static void write_hook_status(const char* name, void* target, void* tramp) {
+    FILE* f = fopen("/data/adb/modules/colamanga_mod/run/hooks_status.txt", "a");
+    if (f) {
+        fprintf(f, "%s|%p|%p\n", name, target, tramp);
+        fclose(f);
+    }
+}
+
+static void* inline_hook(const char* name, void* target, void* hook_fn) {
     if (!target || !hook_fn || g_hook_count >= MAX_HOOKS) return nullptr;
     HookEntry& e = g_hooks[g_hook_count];
     e.target = target;
@@ -127,85 +223,232 @@ static void* inline_hook(void* target, void* hook_fn) {
     mprotect((void*)page, 0x1000, PROT_READ|PROT_EXEC);
     __builtin___clear_cache((char*)target, (char*)target + 16);
     g_hook_count++;
+    LOGI("[hook] %s -> %p (tramp=%p)", name, target, e.tramp);
+    write_hook_status(name, target, e.tramp);
     return e.tramp;
 }
 
-// ====== __system_property_get ======
+// ====== 属性伪装映射（供 property hook + JNI hook 共用）======
+static const char* fake_prop(const char* name) {
+    maybe_reload();
+    if (!name) return nullptr;
+    if (!strcmp(name, "ro.serialno") || !strcmp(name, "ro.boot.serialno")) return s_serialno;
+    if (!strcmp(name, "ro.build.fingerprint") || !strcmp(name, "ro.system.build.fingerprint")) return s_fingerprint;
+    if (!strcmp(name, "ro.product.model") || !strcmp(name, "ro.product.system.model") || !strcmp(name, "ro.product.vendor.model")) return s_model;
+    if (!strcmp(name, "ro.product.brand") || !strcmp(name, "ro.product.system.brand") || !strcmp(name, "ro.product.vendor.brand")) return s_brand;
+    if (!strcmp(name, "ro.product.device")) return s_device;
+    if (!strcmp(name, "ro.product.name")) return s_product;
+    if (!strcmp(name, "ro.product.manufacturer")) return s_manufacturer;
+    if (!strcmp(name, "ro.hardware") || !strcmp(name, "ro.boot.hardware")) return s_hardware;
+    if (!strcmp(name, "ro.product.board") || !strcmp(name, "ro.board.platform")) return s_board;
+    if (!strcmp(name, "ro.build.host")) return s_host;
+    if (!strcmp(name, "ro.build.id")) return s_build_id;
+    if (!strcmp(name, "ro.build.version.incremental")) return s_incremental;
+    if (!strcmp(name, "ro.build.version.security_patch")) return s_security_patch;
+    if (!strcmp(name, "ro.build.version.release")) return s_release;
+    if (!strcmp(name, "ro.build.version.sdk")) return s_sdk;
+    if (!strcmp(name, "ro.build.type")) return s_type;
+    if (!strcmp(name, "ro.build.tags")) return s_tags;
+    if (!strcmp(name, "ro.boot.verifiedbootstate")) return "green";
+    if (!strcmp(name, "ro.boot.flash.locked")) return "1";
+    if (!strcmp(name, "ro.boot.vbmeta.device_state")) return "locked";
+    return nullptr;
+}
+
+// ====== __system_property_get（native 直接读）======
 static void* tramp_property = nullptr;
 typedef int (*property_get_t)(const char*, char*, const char*);
 static int hook_property_get(const char* name, char* value, const char* default_value) {
-    const char* fake = nullptr;
-    if (name) {
-        if (!strcmp(name, "ro.serialno") || !strcmp(name, "ro.boot.serialno")) fake = s_serialno;
-        else if (!strcmp(name, "ro.build.fingerprint") || !strcmp(name, "ro.system.build.fingerprint")) fake = s_fingerprint;
-        else if (!strcmp(name, "ro.product.model") || !strcmp(name, "ro.product.system.model") || !strcmp(name, "ro.product.vendor.model")) fake = s_model;
-        else if (!strcmp(name, "ro.product.brand") || !strcmp(name, "ro.product.system.brand") || !strcmp(name, "ro.product.vendor.brand")) fake = s_brand;
-        else if (!strcmp(name, "ro.product.device")) fake = s_device;
-        else if (!strcmp(name, "ro.product.name")) fake = s_product;
-        else if (!strcmp(name, "ro.product.manufacturer")) fake = s_manufacturer;
-        else if (!strcmp(name, "ro.hardware") || !strcmp(name, "ro.boot.hardware")) fake = s_hardware;
-        else if (!strcmp(name, "ro.product.board") || !strcmp(name, "ro.board.platform")) fake = s_board;
-        else if (!strcmp(name, "ro.build.host")) fake = s_host;
-        else if (!strcmp(name, "ro.build.id")) fake = s_build_id;
-        else if (!strcmp(name, "ro.build.version.incremental")) fake = s_incremental;
-        else if (!strcmp(name, "ro.build.version.security_patch")) fake = s_security_patch;
-        else if (!strcmp(name, "ro.build.version.release")) fake = s_release;
-        else if (!strcmp(name, "ro.build.version.sdk")) fake = s_sdk;
-        else if (!strcmp(name, "ro.build.type")) fake = s_type;
-        else if (!strcmp(name, "ro.build.tags")) fake = s_tags;
-        else if (!strcmp(name, "ro.boot.verifiedbootstate")) fake = "green";
-        else if (!strcmp(name, "ro.boot.flash.locked")) fake = "1";
-        else if (!strcmp(name, "ro.boot.vbmeta.device_state")) fake = "locked";
+    if (g_cfg.hook_property) {
+        const char* fake = fake_prop(name);
+        if (fake) { if (value) { strncpy(value, fake, 91); value[91] = 0; } return (int)strlen(fake); }
     }
-    if (fake) { if (value) { strncpy(value, fake, 91); value[91] = 0; } return (int)strlen(fake); }
     return ((property_get_t)tramp_property)(name, value, default_value);
+}
+
+// ====== __system_property_read_callback（覆盖 Java SystemProperties.get）======
+// Java 层 SystemProperties.get 走 __system_property_find + read_callback，
+// 不走 __system_property_get。之前只 hook get 有缺口，这里补全。
+typedef void (*prop_cb_t)(void*, const char*, const char*, uint32_t);
+typedef void (*prop_read_t)(const void*, prop_cb_t, void*);
+static void* tramp_property_cb = nullptr;
+static thread_local prop_cb_t tl_user_cb = nullptr;
+static thread_local void* tl_user_cookie = nullptr;
+
+static void my_prop_cb(void* cookie, const char* name, const char* value, uint32_t serial) {
+    const char* fake = fake_prop(name);
+    tl_user_cb(tl_user_cookie, name, fake ? fake : value, serial);
+}
+
+static void hook_property_read_cb(const void* pi, prop_cb_t cb, void* cookie) {
+    if (g_cfg.hook_property_cb) {
+        tl_user_cb = cb;
+        tl_user_cookie = cookie;
+        ((prop_read_t)tramp_property_cb)(pi, my_prop_cb, cookie);
+    } else {
+        ((prop_read_t)tramp_property_cb)(pi, cb, cookie);
+    }
 }
 
 // ====== ptrace（反调试）======
 static void* tramp_ptrace = nullptr;
 typedef long (*ptrace_t)(int, pid_t, void*, void*);
 static long hook_ptrace(int request, pid_t pid, void* addr, void* data) {
-    if (request == PTRACE_TRACEME) return 0;
-    if (request == PTRACE_ATTACH) { errno = 0; return -1; }
+    if (g_cfg.hook_ptrace) {
+        if (request == PTRACE_TRACEME) return 0;
+        if (request == PTRACE_ATTACH) { errno = 0; return -1; }
+    }
     return ((ptrace_t)tramp_ptrace)(request, pid, addr, data);
 }
 
-// ====== access（隐藏 frida/root 文件）======
+// ====== 文件路径过滤（可疑关键词 + 沙箱 + maps 隐藏）======
+static bool is_suspicious_path(const char* p) {
+    if (!p) return false;
+    char buf[512];
+    strncpy(buf, p, sizeof(buf) - 1); buf[sizeof(buf) - 1] = 0;
+    char* seg = strtok(buf, "/");
+    while (seg) {
+        if (!strcmp(seg, "su") || !strcmp(seg, "supersu") ||
+            strstr(seg, "magisk") || strstr(seg, "xposed") || strstr(seg, "lsposed") ||
+            strstr(seg, "riru") || strstr(seg, "zygisk") || strstr(seg, "kernelsu") ||
+            strstr(seg, "frida") || strstr(seg, "gadget") || strstr(seg, "gum-js") ||
+            strstr(seg, "dobby") || strstr(seg, "shadowhook") || strstr(seg, "substrate"))
+            return true;
+        seg = strtok(nullptr, "/");
+    }
+    return false;
+}
+
+static bool is_other_app_data(const char* p) {
+    if (!p) return false;
+    const char* roots[] = {
+        "/data/data/", "/data/user/0/", "/data/user_de/0/",
+        "/sdcard/Android/data/", "/storage/emulated/0/Android/data/", nullptr
+    };
+    for (int i = 0; roots[i]; i++) {
+        size_t L = strlen(roots[i]);
+        if (strncmp(p, roots[i], L) == 0) {
+            const char* rest = p + L;
+            if (strncmp(rest, "com.hswl.", 9) == 0) return false;  // 自身
+            return true;                                            // 其他 app
+        }
+    }
+    return false;
+}
+
+static bool path_blocked(const char* p) {
+    maybe_reload();
+    if (!p || p[0] != '/') return false;
+    if (is_suspicious_path(p)) return true;
+    if (g_cfg.file_sandbox && is_other_app_data(p)) return true;
+    if (g_cfg.hide_maps &&
+        (!strcmp(p, "/proc/self/maps") || !strcmp(p, "/proc/self/smaps") ||
+         !strcmp(p, "/proc/self/map_files"))) return true;
+    return false;
+}
+
+// ====== access ======
 static void* tramp_access = nullptr;
 typedef int (*access_t)(const char*, int);
 static int hook_access(const char* path, int mode) {
-    if (path) {
-        const char* kws[] = {"frida", "gum-js-loop", "magisk", "/su", "supersu", "kernelsu", "xposed", "lsposed", "riru", "zygisk", "gadget", nullptr};
-        for (int i = 0; kws[i]; i++) if (strstr(path, kws[i])) { errno = ENOENT; return -1; }
-    }
+    if (g_cfg.hook_access && path_blocked(path)) { errno = ENOENT; return -1; }
     return ((access_t)tramp_access)(path, mode);
 }
 
-// ====== connect（抓包）======
+// ====== open / openat（文件沙箱 + 隐藏）======
+typedef int (*open3_t)(const char*, int, mode_t);
+typedef int (*openat4_t)(int, const char*, int, mode_t);
+static void* tramp_open = nullptr;
+static void* tramp_openat = nullptr;
+static int hook_open(const char* path, int flags, mode_t mode) {
+    if (g_cfg.hook_open && path_blocked(path)) { errno = ENOENT; return -1; }
+    return ((open3_t)tramp_open)(path, flags, mode);
+}
+static int hook_openat(int dirfd, const char* path, int flags, mode_t mode) {
+    if (g_cfg.hook_openat && path_blocked(path)) { errno = ENOENT; return -1; }
+    return ((openat4_t)tramp_openat)(dirfd, path, flags, mode);
+}
+
+// ====== stat / lstat / fstatat（路径枚举隐藏）======
+typedef int (*stat_t)(const char*, struct stat*);
+typedef int (*fstatat_t)(int, const char*, struct stat*, int);
+static void* tramp_stat = nullptr;
+static void* tramp_lstat = nullptr;
+static void* tramp_fstatat = nullptr;
+static int hook_stat(const char* path, struct stat* st) {
+    if (g_cfg.hook_stat && path_blocked(path)) { errno = ENOENT; return -1; }
+    return ((stat_t)tramp_stat)(path, st);
+}
+static int hook_lstat(const char* path, struct stat* st) {
+    if (g_cfg.hook_stat && path_blocked(path)) { errno = ENOENT; return -1; }
+    return ((stat_t)tramp_lstat)(path, st);
+}
+static int hook_fstatat(int dirfd, const char* path, struct stat* st, int flags) {
+    if (g_cfg.hook_stat && path_blocked(path)) { errno = ENOENT; return -1; }
+    return ((fstatat_t)tramp_fstatat)(dirfd, path, st, flags);
+}
+
+// ====== uname（内核伪装——清 KernelSU/Magisk 标记）======
+static void* tramp_uname = nullptr;
+typedef int (*uname_t)(struct utsname*);
+static void strip_root_markers(char* s) {
+    static const char* ms[] = {
+        "-KernelSU", "KernelSU", "-magisk", "-Magisk", "Magisk",
+        "-ksu", "-gf92516", "-ZYGISK", "Zygisk", nullptr
+    };
+    for (int i = 0; ms[i]; i++) {
+        char* p;
+        while ((p = strstr(s, ms[i]))) {
+            memmove(p, p + strlen(ms[i]), strlen(p + strlen(ms[i])) + 1);
+        }
+    }
+}
+static int hook_uname(struct utsname* buf) {
+    int r = ((uname_t)tramp_uname)(buf);
+    if (r == 0 && buf && g_cfg.hook_uname) {
+        strip_root_markers(buf->release);
+        strip_root_markers(buf->version);
+    }
+    return r;
+}
+
+// ====== connect（抓包 + 反下发阻断）======
 static void* tramp_connect = nullptr;
 typedef int (*connect_t)(int, const struct sockaddr*, socklen_t);
+static bool is_blocked_host(const char* host) {
+    if (!g_cfg.net_blocklist || !host || !g_blocklist[0]) return false;
+    char* list = strdup(g_blocklist);
+    char* tok = strtok(list, ",\n \t");
+    bool hit = false;
+    while (tok) {
+        if (tok[0] && strstr(host, tok)) { hit = true; break; }
+        tok = strtok(nullptr, ",\n \t");
+    }
+    free(list);
+    return hit;
+}
 static int hook_connect(int sockfd, const struct sockaddr* addr, socklen_t addrlen) {
     if (addr) {
         char ip[64] = {0}; int port = 0;
         if (addr->sa_family == AF_INET) { inet_ntop(AF_INET, &((const struct sockaddr_in*)addr)->sin_addr, ip, sizeof(ip)); port = ntohs(((const struct sockaddr_in*)addr)->sin_port); }
         else if (addr->sa_family == AF_INET6) { inet_ntop(AF_INET6, &((const struct sockaddr_in6*)addr)->sin6_addr, ip, sizeof(ip)); port = ntohs(((const struct sockaddr_in6*)addr)->sin6_port); }
+        if (g_cfg.hook_connect && ip[0] && is_blocked_host(ip)) { errno = ECONNREFUSED; return -1; }
         if (ip[0] && port > 0) LOGI("[NET] %s:%d", ip, port);
     }
     return ((connect_t)tramp_connect)(sockfd, addr, addrlen);
 }
 
-// ====== getaddrinfo（DNS 记录）======
+// ====== getaddrinfo（DNS + 反下发阻断）======
 static void* tramp_getaddrinfo = nullptr;
 typedef int (*getaddrinfo_t)(const char*, const char*, const struct addrinfo*, struct addrinfo**);
 static int hook_getaddrinfo(const char* node, const char* service, const struct addrinfo* hints, struct addrinfo** res) {
     if (node) LOGI("[DNS] %s", node);
+    if (g_cfg.hook_getaddrinfo && node && is_blocked_host(node)) return EAI_NONAME;
     return ((getaddrinfo_t)tramp_getaddrinfo)(node, service, hints, res);
 }
 
-// ====== JNI hook：返回假字符串 ======
+// ====== JNI hook：假字符串/byte[] ======
 static jstring jstr(JNIEnv* env, const char* s) { return env->NewStringUTF(s); }
-
-// 返回假 byte[]（MAC/Widevine 用）
 static jbyteArray jbytes(JNIEnv* env, const char* hex) {
     int n = strlen(hex) / 2;
     jbyteArray arr = env->NewByteArray(n);
@@ -231,7 +474,6 @@ static jstring hook_Tel_getSubscriberId(JNIEnv* env, jobject) { return jstr(env,
 static jstring hook_Tel_getMeid(JNIEnv* env, jobject) { return jstr(env, s_meid); }
 static jstring hook_Wifi_getMac(JNIEnv* env, jobject) { return jstr(env, s_mac); }
 static jbyteArray hook_Netif_getHardwareAddr(JNIEnv* env, jobject) {
-    // MAC "A8:63:EA:C6:D2:3E" -> 6 bytes
     jbyteArray arr = env->NewByteArray(6);
     if (arr) {
         jbyte b[6] = {(jbyte)0xA8,0x63,(jbyte)0xEA,(jbyte)0xC6,(jbyte)0xD2,0x3E};
@@ -269,54 +511,63 @@ public:
         if (!target) return;
         LOGI("[post] 目标进程沙箱化，开始 hook");
         load_config();
+        read_hooks_conf();
 
-        // 1. inline hook libc（每个独立 trampoline）
-        void* fn = dlsym(RTLD_DEFAULT, "__system_property_get");
-        tramp_property = inline_hook(fn, (void*)hook_property_get);
-        fn = dlsym(RTLD_DEFAULT, "ptrace");
-        tramp_ptrace = inline_hook(fn, (void*)hook_ptrace);
-        fn = dlsym(RTLD_DEFAULT, "access");
-        tramp_access = inline_hook(fn, (void*)hook_access);
-        fn = dlsym(RTLD_DEFAULT, "connect");
-        tramp_connect = inline_hook(fn, (void*)hook_connect);
-        fn = dlsym(RTLD_DEFAULT, "getaddrinfo");
-        tramp_getaddrinfo = inline_hook(fn, (void*)hook_getaddrinfo);
-        LOGI("[hook] libc: property=%p ptrace=%p access=%p connect=%p dns=%p",
-             tramp_property, tramp_ptrace, tramp_access, tramp_connect, tramp_getaddrinfo);
+        // 清空 hook 状态（供 WebUI 可视化）
+        FILE* sf = fopen("/data/adb/modules/colamanga_mod/run/hooks_status.txt", "w");
+        if (sf) fclose(sf);
 
-        // 2. hook JNI native 方法（设备标识）
-        JNINativeMethod build_methods[] = {
-            {"getSerial", "()Ljava/lang/String;", (void*)hook_Build_getSerial},
-            {"getRadioVersion", "()Ljava/lang/String;", (void*)hook_Build_getRadioVersion},
-        };
-        api->hookJniNativeMethods(env, "android/os/Build", build_methods, 2);
+        // 1. inline hook libc（12 个）
+        void* fn;
+        tramp_property   = inline_hook("property_get", dlsym(RTLD_DEFAULT, "__system_property_get"), (void*)hook_property_get);
+        tramp_property_cb= inline_hook("property_read_cb", dlsym(RTLD_DEFAULT, "__system_property_read_callback"), (void*)hook_property_read_cb);
+        tramp_ptrace     = inline_hook("ptrace", dlsym(RTLD_DEFAULT, "ptrace"), (void*)hook_ptrace);
+        tramp_access     = inline_hook("access", dlsym(RTLD_DEFAULT, "access"), (void*)hook_access);
+        tramp_open       = inline_hook("open", dlsym(RTLD_DEFAULT, "open"), (void*)hook_open);
+        tramp_openat     = inline_hook("openat", dlsym(RTLD_DEFAULT, "openat"), (void*)hook_openat);
+        tramp_stat       = inline_hook("stat", dlsym(RTLD_DEFAULT, "stat"), (void*)hook_stat);
+        tramp_lstat      = inline_hook("lstat", dlsym(RTLD_DEFAULT, "lstat"), (void*)hook_lstat);
+        tramp_fstatat    = inline_hook("fstatat", dlsym(RTLD_DEFAULT, "fstatat"), (void*)hook_fstatat);
+        tramp_uname      = inline_hook("uname", dlsym(RTLD_DEFAULT, "uname"), (void*)hook_uname);
+        tramp_connect    = inline_hook("connect", dlsym(RTLD_DEFAULT, "connect"), (void*)hook_connect);
+        tramp_getaddrinfo= inline_hook("getaddrinfo", dlsym(RTLD_DEFAULT, "getaddrinfo"), (void*)hook_getaddrinfo);
+        LOGI("[hook] libc 12 个 inline hook 完成");
 
-        JNINativeMethod tel_methods[] = {
-            {"getImei", "()Ljava/lang/String;", (void*)hook_Tel_getImei},
-            {"getDeviceId", "()Ljava/lang/String;", (void*)hook_Tel_getDeviceId},
-            {"getLine1Number", "()Ljava/lang/String;", (void*)hook_Tel_getLine1Number},
-            {"getSubscriberId", "()Ljava/lang/String;", (void*)hook_Tel_getSubscriberId},
-            {"getMeid", "()Ljava/lang/String;", (void*)hook_Tel_getMeid},
-        };
-        api->hookJniNativeMethods(env, "android/telephony/TelephonyManager", tel_methods, 5);
+        // 2. JNI native 方法 hook（设备标识）
+        if (g_cfg.hook_jni) {
+            JNINativeMethod build_methods[] = {
+                {"getSerial", "()Ljava/lang/String;", (void*)hook_Build_getSerial},
+                {"getRadioVersion", "()Ljava/lang/String;", (void*)hook_Build_getRadioVersion},
+            };
+            api->hookJniNativeMethods(env, "android/os/Build", build_methods, 2);
 
-        JNINativeMethod wifi_methods[] = {
-            {"getMacAddress", "()Ljava/lang/String;", (void*)hook_Wifi_getMac},
-        };
-        api->hookJniNativeMethods(env, "android/net/wifi/WifiInfo", wifi_methods, 1);
+            JNINativeMethod tel_methods[] = {
+                {"getImei", "()Ljava/lang/String;", (void*)hook_Tel_getImei},
+                {"getDeviceId", "()Ljava/lang/String;", (void*)hook_Tel_getDeviceId},
+                {"getLine1Number", "()Ljava/lang/String;", (void*)hook_Tel_getLine1Number},
+                {"getSubscriberId", "()Ljava/lang/String;", (void*)hook_Tel_getSubscriberId},
+                {"getMeid", "()Ljava/lang/String;", (void*)hook_Tel_getMeid},
+            };
+            api->hookJniNativeMethods(env, "android/telephony/TelephonyManager", tel_methods, 5);
 
-        JNINativeMethod netif_methods[] = {
-            {"getHardwareAddress", "()[B", (void*)hook_Netif_getHardwareAddr},
-        };
-        api->hookJniNativeMethods(env, "java/net/NetworkInterface", netif_methods, 1);
+            JNINativeMethod wifi_methods[] = {
+                {"getMacAddress", "()Ljava/lang/String;", (void*)hook_Wifi_getMac},
+            };
+            api->hookJniNativeMethods(env, "android/net/wifi/WifiInfo", wifi_methods, 1);
 
-        JNINativeMethod drm_methods[] = {
-            {"getPropertyByteArray", "(Ljava/lang/String;)[B", (void*)hook_MediaDrm_getProperty},
-        };
-        api->hookJniNativeMethods(env, "android/media/MediaDrm", drm_methods, 1);
+            JNINativeMethod netif_methods[] = {
+                {"getHardwareAddress", "()[B", (void*)hook_Netif_getHardwareAddr},
+            };
+            api->hookJniNativeMethods(env, "java/net/NetworkInterface", netif_methods, 1);
 
-        LOGI("[hook] JNI: Build(2)+Telephony(5)+Wifi(1)+Netif(1)+MediaDrm(1) 已替换");
-        LOGI("[hook] ColaManga 纯 Zygisk 模块 hook 完成");
+            JNINativeMethod drm_methods[] = {
+                {"getPropertyByteArray", "(Ljava/lang/String;)[B", (void*)hook_MediaDrm_getProperty},
+            };
+            api->hookJniNativeMethods(env, "android/media/MediaDrm", drm_methods, 1);
+            LOGI("[hook] JNI 10 个方法已替换");
+        }
+
+        LOGI("[hook] Colamanga Zygisk v3 全部 hook 完成");
     }
 
     void preServerSpecialize(ServerSpecializeArgs*) override {}

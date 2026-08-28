@@ -360,7 +360,42 @@ EOF
     su -c "am force-stop com.hswl.cargo_owner.cargo_owner" 2>/dev/null
     echo "{\"set\":\"$KEY\",\"value\":\"$VAL\",\"提示\":\"已生效，重新打开漫城\"}"
     ;;
+  hooks_status)
+    # 返回全部 hook 开关 + 已加载状态（可视化仪表盘）
+    printf '{"conf":{'
+    SEP=""
+    for k in hook_property hook_property_cb hook_ptrace hook_access hook_open hook_openat hook_stat hook_uname hook_connect hook_getaddrinfo hook_jni file_sandbox hide_maps net_blocklist; do
+      V=$(grep "^$k=" "$MODDIR/config/hooks.conf" 2>/dev/null | cut -d= -f2)
+      [ -z "$V" ] && V=1
+      printf '%s"%s":"%s"' "$SEP" "$k" "$V"
+      SEP=","
+    done
+    printf '},"loaded":['
+    SEP=""
+    if [ -s "$MODDIR/run/hooks_status.txt" ] 2>/dev/null; then
+      while IFS='|' read -r name target tramp; do
+        [ -z "$name" ] && continue
+        printf '%s{"name":"%s","target":"%s","tramp":"%s"}' "$SEP" "$name" "$target" "$tramp"
+        SEP=","
+      done < "$MODDIR/run/hooks_status.txt"
+    fi
+    printf ']}\n'
+    ;;
+  hooks_toggle)
+    # 切换 hook: hooks_toggle <hook_name> [0|1]（不传值则翻转，实时生效）
+    KEY="$2"
+    [ -z "$KEY" ] && { echo '{"error":"用法 hooks_toggle hook_name [0|1]"}'; exit 1; }
+    CUR=$(grep "^$KEY=" "$MODDIR/config/hooks.conf" 2>/dev/null | cut -d= -f2)
+    [ -z "$CUR" ] && CUR=1
+    if [ -n "$3" ]; then NEW="$3"; else [ "$CUR" = "1" ] && NEW=0 || NEW=1; fi
+    if grep -q "^$KEY=" "$MODDIR/config/hooks.conf" 2>/dev/null; then
+      sed -i "s/^$KEY=.*/$KEY=$NEW/" "$MODDIR/config/hooks.conf"
+    else
+      echo "$KEY=$NEW" >> "$MODDIR/config/hooks.conf"
+    fi
+    echo "{\"$KEY\":\"$NEW\",\"生效\":\"so每256次调用重读配置，实时生效无需重启\"}"
+    ;;
   *)
-    echo "Usage: control.sh <status|toggle|set_profile|randomize|log|clear_log|kill_app|get_props|connections|diagnosis|frida|snapshot|restore|safe_mode|logmon|capture|randomize_device|lspd_log|servers|set_field>"
+    echo "Usage: control.sh <status|toggle|set_profile|randomize|log|clear_log|kill_app|get_props|connections|diagnosis|frida|snapshot|restore|safe_mode|logmon|capture|randomize_device|lspd_log|servers|set_field|hooks_status|hooks_toggle>"
     ;;
 esac

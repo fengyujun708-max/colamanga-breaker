@@ -1,0 +1,4 @@
+# Colamanga 反服务器下发阻断列表
+# 每行一个域名或 IP（片段匹配），也支持逗号/空格分隔
+# 例：devicehelper.example.com / api.anti-cheat.com / 104.18.0.0
+# 留空=不阻断任何网络（net_blocklist 总开关仍可整体控制启用/禁用）
