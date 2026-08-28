@@ -72,6 +72,7 @@ struct HookCfg {
     int hook_open         = 1;
     int hook_openat       = 1;
     int hook_stat         = 1;
+    int hook_readlink     = 1;
     int hook_uname        = 1;
     int hook_connect      = 1;
     int hook_getaddrinfo  = 1;
@@ -116,6 +117,7 @@ static void read_hooks_conf() {
             else if (!strncmp(p, "hook_open=", 10))        g_cfg.hook_open        = conf_get_int(p);
             else if (!strncmp(p, "hook_openat=", 12))      g_cfg.hook_openat      = conf_get_int(p);
             else if (!strncmp(p, "hook_stat=", 10))        g_cfg.hook_stat        = conf_get_int(p);
+            else if (!strncmp(p, "hook_readlink=", 14))    g_cfg.hook_readlink    = conf_get_int(p);
             else if (!strncmp(p, "hook_uname=", 11))       g_cfg.hook_uname       = conf_get_int(p);
             else if (!strncmp(p, "hook_connect=", 13))     g_cfg.hook_connect     = conf_get_int(p);
             else if (!strncmp(p, "hook_getaddrinfo=", 17)) g_cfg.hook_getaddrinfo = conf_get_int(p);
@@ -386,6 +388,38 @@ static int hook_lstat(const char* path, struct stat* st) {
 static int hook_fstatat(int dirfd, const char* path, struct stat* st, int flags) {
     if (g_cfg.hook_stat && path_blocked(path)) { errno = ENOENT; return -1; }
     return ((fstatat_t)tramp_fstatat)(dirfd, path, st, flags);
+}
+
+// ====== readlink / readlinkat（FD 路径解析隐藏 .so 真实路径）======
+// tryigit.dev: .so 路径会通过 readlink /proc/self/fd/N 暴露，必须 scrub 解析结果
+typedef ssize_t (*readlink_t)(const char*, char*, size_t);
+typedef ssize_t (*readlinkat_t)(int, const char*, char*, size_t);
+static void* tramp_readlink = nullptr;
+static void* tramp_readlinkat = nullptr;
+static ssize_t scrub_readlink_result(char* buf, size_t bufsiz, ssize_t n) {
+    if (n <= 0) return n;
+    char tmp[512];
+    size_t copy = (size_t)n < sizeof(tmp)-1 ? (size_t)n : sizeof(tmp)-1;
+    memcpy(tmp, buf, copy); tmp[copy] = 0;
+    if (is_suspicious_path(tmp) || strstr(tmp, "colamanga")) {
+        const char* fake = "/system/lib64/libc.so";
+        size_t fl = strlen(fake);
+        if (fl < bufsiz) { memcpy(buf, fake, fl+1); return (ssize_t)fl; }
+        errno = ENOENT; return -1;
+    }
+    return n;
+}
+static ssize_t hook_readlink(const char* path, char* buf, size_t bufsiz) {
+    if (g_cfg.hook_readlink && path_blocked(path)) { errno = ENOENT; return -1; }
+    ssize_t n = ((readlink_t)tramp_readlink)(path, buf, bufsiz);
+    if (g_cfg.hook_readlink) n = scrub_readlink_result(buf, bufsiz, n);
+    return n;
+}
+static ssize_t hook_readlinkat(int dirfd, const char* path, char* buf, size_t bufsiz) {
+    if (g_cfg.hook_readlink && path_blocked(path)) { errno = ENOENT; return -1; }
+    ssize_t n = ((readlinkat_t)tramp_readlinkat)(dirfd, path, buf, bufsiz);
+    if (g_cfg.hook_readlink) n = scrub_readlink_result(buf, bufsiz, n);
+    return n;
 }
 
 // ====== uname（内核伪装——清 KernelSU/Magisk 标记）======
