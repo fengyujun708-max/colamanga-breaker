@@ -336,7 +336,31 @@ EOF
     echo ""
     echo "===== DNS 解析域名（需 so getaddrinfo hook + lspd_log）====="
     ;;
+  set_field)
+    # 手动自定义设备字段：set_field <key> <value>
+    # 改 device_id.json 里的单个字段，然后 resetprop + 杀 app
+    KEY="$2"; VAL="$3"
+    [ -z "$KEY" ] || [ -z "$VAL" ] && { echo "{\"error\":\"用法 set_field key value\"}"; exit 1; }
+    # JSON 替换（sed 按 key 替换 value）
+    if grep -q "\"$KEY\"" "$MODDIR/config/device_id.json" 2>/dev/null; then
+        sed -i "s/\"$KEY\"[[:space:]]*:[[:space:]]*\"[^\"]*\"/\"$KEY\": \"$VAL\"/" "$MODDIR/config/device_id.json"
+    else
+        # key 不存在则追加
+        sed -i "s/^}/,\n  \"$KEY\": \"$VAL\"\n}/" "$MODDIR/config/device_id.json"
+    fi
+    # 如果 key 对应系统属性，立即 resetprop
+    case "$KEY" in
+      serialno) resetprop ro.serialno "$VAL" ;;
+      fingerprint) resetprop ro.build.fingerprint "$VAL" ;;
+      model) resetprop ro.product.model "$VAL" ;;
+      brand) resetprop ro.product.brand "$VAL" ;;
+    esac
+    # 杀 app 让新值生效
+    su -c "am force-stop com.hswl.car_owner" 2>/dev/null
+    su -c "am force-stop com.hswl.cargo_owner.cargo_owner" 2>/dev/null
+    echo "{\"set\":\"$KEY\",\"value\":\"$VAL\",\"提示\":\"已生效，重新打开漫城\"}"
+    ;;
   *)
-    echo "Usage: control.sh <status|toggle|set_profile|randomize|log|clear_log|kill_app|get_props|connections|diagnosis|frida|snapshot|restore|safe_mode|logmon|capture|randomize_device|lspd_log|servers>"
+    echo "Usage: control.sh <status|toggle|set_profile|randomize|log|clear_log|kill_app|get_props|connections|diagnosis|frida|snapshot|restore|safe_mode|logmon|capture|randomize_device|lspd_log|servers|set_field>"
     ;;
 esac
