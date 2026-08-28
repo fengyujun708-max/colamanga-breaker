@@ -476,11 +476,12 @@ typedef int (*connect_t)(int, const struct sockaddr*, socklen_t);
 static bool is_blocked_host(const char* host) {
     if (!g_cfg.net_blocklist || !host || !g_blocklist[0]) return false;
     char* list = strdup(g_blocklist);
-    char* tok = strtok(list, ",\n \t");
+    char* save = nullptr;
+    char* tok = strtok_r(list, ",\n \t", &save);
     bool hit = false;
     while (tok) {
         if (tok[0] && strstr(host, tok)) { hit = true; break; }
-        tok = strtok(nullptr, ",\n \t");
+        tok = strtok_r(nullptr, ",\n \t", &save);
     }
     free(list);
     return hit;
