@@ -185,7 +185,7 @@ static jstring hook_Telephony_getLine1Number(JNIEnv* env, jobject) { return fake
 static jstring hook_Telephony_getSubscriberId(JNIEnv* env, jobject) { return fakeJString(env, s_imei); }
 static jstring hook_Telephony_getMeid(JNIEnv* env, jobject) { return fakeJString(env, s_meid); }
 
-class ColaMangaModule : public ModuleBase {
+class ColaMangaModule : public ModuleBaseBase {
 public:
     Api* api;
     JNIEnv* env;
