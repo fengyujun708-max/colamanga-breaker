@@ -1,6 +1,5 @@
-// colamanga_zygisk.cpp - 纯 Zygisk 模块（系统原生级，不依赖 LSPosed）
-// 通过 Zygisk 在 zygote 注入，native 层 hook libc + JNI 方法，无 xposed 特征
-// hook: __system_property_get(假属性) + ptrace(反调试) + access(隐藏frida/root) + JNI(设备标识)
+// colamanga_zygisk.cpp - 纯 Zygisk 模块 v2（修复 trampoline bug + 补全 so 层 hook）
+// 不依赖 LSPosed，native 层 hook libc + JNI 方法
 #include "zygisk.hpp"
 #include <jni.h>
 #include <cstring>
@@ -27,7 +26,7 @@ using zygisk::AppSpecializeArgs;
 using zygisk::ModuleBase;
 using zygisk::ServerSpecializeArgs;
 
-// ===== 假属性（从 device_id.json 读取，WebUI 实时改）=====
+// ===== 假设备（从 device_id.json 读，WebUI 实时改）=====
 static char s_serialno[64] = "RMU48KXQN12PZ7C9";
 static char s_fingerprint[128] = "Xiaomi/socrates/socrates:13/TKQ1.221114.001/V14.0.4.0.TLCCNXM:user/release-keys";
 static char s_model[64] = "2201123C";
@@ -51,6 +50,7 @@ static char s_meid[32] = "A1B2C3D4E5F6A7";
 static char s_line1[32] = "+8613912345678";
 static char s_mac[32] = "A8:63:EA:C6:D2:3E";
 static char s_androidid[32] = "a1b2c3d4e5f6g7h8";
+static char s_widevine[64] = "860f7c5e7fb431bfe5ec828c62a36419";
 
 static void json_get_str(const char* json, const char* key, char* out, int outlen) {
     const char* k = strstr(json, key);
@@ -95,25 +95,30 @@ static void load_config() {
     json_get_str(json, "line1", s_line1, sizeof(s_line1));
     json_get_str(json, "mac", s_mac, sizeof(s_mac));
     json_get_str(json, "android_id", s_androidid, sizeof(s_androidid));
+    json_get_str(json, "widevine", s_widevine, sizeof(s_widevine));
     free(json);
-    LOGI("[cfg] %s %s serial=%s imei=%s", s_brand, s_model, s_serialno, s_imei);
+    LOGI("[cfg] %s %s serial=%s imei=%s widevine=%s", s_brand, s_model, s_serialno, s_imei, s_widevine);
 }
 
-// ====== inline hook（手写，最可控）======
-static unsigned char g_orig[16];
-static void* g_tramp = nullptr;
+// ====== inline hook（多 hook，每个独立 trampoline，修复 trampoline 覆盖 bug）======
+#define MAX_HOOKS 16
+struct HookEntry { void* target; void* tramp; unsigned char orig[16]; };
+static HookEntry g_hooks[MAX_HOOKS];
+static int g_hook_count = 0;
 
 static void* inline_hook(void* target, void* hook_fn) {
-    if (!target || !hook_fn) return nullptr;
-    memcpy(g_orig, target, 16);
-    g_tramp = mmap(nullptr, 4096, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-    if (g_tramp == MAP_FAILED) return nullptr;
-    unsigned char* t = (unsigned char*)g_tramp;
-    memcpy(t, g_orig, 16);
-    *(uint32_t*)(t+16) = 0x58000050;
-    *(uint32_t*)(t+20) = 0xD61FE020;
+    if (!target || !hook_fn || g_hook_count >= MAX_HOOKS) return nullptr;
+    HookEntry& e = g_hooks[g_hook_count];
+    e.target = target;
+    memcpy(e.orig, target, 16);
+    e.tramp = mmap(nullptr, 4096, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+    if (e.tramp == MAP_FAILED) return nullptr;
+    unsigned char* t = (unsigned char*)e.tramp;
+    memcpy(t, e.orig, 16);
+    *(uint32_t*)(t+16) = 0x58000050;  // LDR X17, [PC,#8]
+    *(uint32_t*)(t+20) = 0xD61FE020;  // BR X17
     *(void**)(t+24) = (void*)((uintptr_t)target + 16);
-    __builtin___clear_cache((char*)g_tramp, (char*)g_tramp + 32);
+    __builtin___clear_cache((char*)e.tramp, (char*)e.tramp + 32);
     uintptr_t page = (uintptr_t)target & ~0xFFFULL;
     mprotect((void*)page, 0x1000, PROT_READ|PROT_WRITE|PROT_EXEC);
     *(uint32_t*)((unsigned char*)target+0) = 0x58000050;
@@ -121,7 +126,8 @@ static void* inline_hook(void* target, void* hook_fn) {
     *(void**)((unsigned char*)target+8) = hook_fn;
     mprotect((void*)page, 0x1000, PROT_READ|PROT_EXEC);
     __builtin___clear_cache((char*)target, (char*)target + 16);
-    return g_tramp;
+    g_hook_count++;
+    return e.tramp;
 }
 
 // ====== __system_property_get ======
@@ -175,15 +181,67 @@ static int hook_access(const char* path, int mode) {
     return ((access_t)tramp_access)(path, mode);
 }
 
-// ====== JNI 方法 hook（设备标识 native 方法）======
-static jstring fakeJString(JNIEnv* env, const char* s) { return env->NewStringUTF(s); }
+// ====== connect（抓包）======
+static void* tramp_connect = nullptr;
+typedef int (*connect_t)(int, const struct sockaddr*, socklen_t);
+static int hook_connect(int sockfd, const struct sockaddr* addr, socklen_t addrlen) {
+    if (addr) {
+        char ip[64] = {0}; int port = 0;
+        if (addr->sa_family == AF_INET) { inet_ntop(AF_INET, &((const struct sockaddr_in*)addr)->sin_addr, ip, sizeof(ip)); port = ntohs(((const struct sockaddr_in*)addr)->sin_port); }
+        else if (addr->sa_family == AF_INET6) { inet_ntop(AF_INET6, &((const struct sockaddr_in6*)addr)->sin6_addr, ip, sizeof(ip)); port = ntohs(((const struct sockaddr_in6*)addr)->sin6_port); }
+        if (ip[0] && port > 0) LOGI("[NET] %s:%d", ip, port);
+    }
+    return ((connect_t)tramp_connect)(sockfd, addr, addrlen);
+}
 
-static jstring hook_Build_getSerial(JNIEnv* env, jclass) { return fakeJString(env, s_serialno); }
-static jstring hook_Telephony_getImei(JNIEnv* env, jobject) { return fakeJString(env, s_imei); }
-static jstring hook_Telephony_getDeviceId(JNIEnv* env, jobject) { return fakeJString(env, s_imei); }
-static jstring hook_Telephony_getLine1Number(JNIEnv* env, jobject) { return fakeJString(env, s_line1); }
-static jstring hook_Telephony_getSubscriberId(JNIEnv* env, jobject) { return fakeJString(env, s_imei); }
-static jstring hook_Telephony_getMeid(JNIEnv* env, jobject) { return fakeJString(env, s_meid); }
+// ====== getaddrinfo（DNS 记录）======
+static void* tramp_getaddrinfo = nullptr;
+typedef int (*getaddrinfo_t)(const char*, const char*, const struct addrinfo*, struct addrinfo**);
+static int hook_getaddrinfo(const char* node, const char* service, const struct addrinfo* hints, struct addrinfo** res) {
+    if (node) LOGI("[DNS] %s", node);
+    return ((getaddrinfo_t)tramp_getaddrinfo)(node, service, hints, res);
+}
+
+// ====== JNI hook：返回假字符串 ======
+static jstring jstr(JNIEnv* env, const char* s) { return env->NewStringUTF(s); }
+
+// 返回假 byte[]（MAC/Widevine 用）
+static jbyteArray jbytes(JNIEnv* env, const char* hex) {
+    int n = strlen(hex) / 2;
+    jbyteArray arr = env->NewByteArray(n);
+    if (arr) {
+        jbyte* b = (jbyte*)malloc(n);
+        for (int i = 0; i < n; i++) {
+            int hi = hex[i*2] >= 'a' ? hex[i*2]-'a'+10 : hex[i*2]-'0';
+            int lo = hex[i*2+1] >= 'a' ? hex[i*2+1]-'a'+10 : hex[i*2+1]-'0';
+            b[i] = (jbyte)((hi << 4) | lo);
+        }
+        env->SetByteArrayRegion(arr, 0, n, b);
+        free(b);
+    }
+    return arr;
+}
+
+static jstring hook_Build_getSerial(JNIEnv* env, jclass) { return jstr(env, s_serialno); }
+static jstring hook_Build_getRadioVersion(JNIEnv* env, jclass) { return jstr(env, "1.0.0.0"); }
+static jstring hook_Tel_getImei(JNIEnv* env, jobject) { return jstr(env, s_imei); }
+static jstring hook_Tel_getDeviceId(JNIEnv* env, jobject) { return jstr(env, s_imei); }
+static jstring hook_Tel_getLine1Number(JNIEnv* env, jobject) { return jstr(env, s_line1); }
+static jstring hook_Tel_getSubscriberId(JNIEnv* env, jobject) { return jstr(env, s_imei); }
+static jstring hook_Tel_getMeid(JNIEnv* env, jobject) { return jstr(env, s_meid); }
+static jstring hook_Wifi_getMac(JNIEnv* env, jobject) { return jstr(env, s_mac); }
+static jbyteArray hook_Netif_getHardwareAddr(JNIEnv* env, jobject) {
+    // MAC "A8:63:EA:C6:D2:3E" -> 6 bytes
+    jbyteArray arr = env->NewByteArray(6);
+    if (arr) {
+        jbyte b[6] = {(jbyte)0xA8,0x63,(jbyte)0xEA,(jbyte)0xC6,(jbyte)0xD2,0x3E};
+        env->SetByteArrayRegion(arr, 0, 6, b);
+    }
+    return arr;
+}
+static jbyteArray hook_MediaDrm_getProperty(JNIEnv* env, jobject, jstring name) {
+    return jbytes(env, s_widevine);
+}
 
 class ColaMangaModule : public ModuleBase {
 public:
@@ -209,36 +267,56 @@ public:
 
     void postAppSpecialize(const AppSpecializeArgs* args) override {
         if (!target) return;
-        LOGI("[post] 目标进程已沙箱化，开始 hook");
+        LOGI("[post] 目标进程沙箱化，开始 hook");
         load_config();
 
-        // 1. inline hook libc 函数
+        // 1. inline hook libc（每个独立 trampoline）
         void* fn = dlsym(RTLD_DEFAULT, "__system_property_get");
         tramp_property = inline_hook(fn, (void*)hook_property_get);
         fn = dlsym(RTLD_DEFAULT, "ptrace");
         tramp_ptrace = inline_hook(fn, (void*)hook_ptrace);
         fn = dlsym(RTLD_DEFAULT, "access");
         tramp_access = inline_hook(fn, (void*)hook_access);
-        LOGI("[hook] libc: property=%p ptrace=%p access=%p", tramp_property, tramp_ptrace, tramp_access);
+        fn = dlsym(RTLD_DEFAULT, "connect");
+        tramp_connect = inline_hook(fn, (void*)hook_connect);
+        fn = dlsym(RTLD_DEFAULT, "getaddrinfo");
+        tramp_getaddrinfo = inline_hook(fn, (void*)hook_getaddrinfo);
+        LOGI("[hook] libc: property=%p ptrace=%p access=%p connect=%p dns=%p",
+             tramp_property, tramp_ptrace, tramp_access, tramp_connect, tramp_getaddrinfo);
 
         // 2. hook JNI native 方法（设备标识）
-        const char* build_serial[] = {"getSerial"};
         JNINativeMethod build_methods[] = {
             {"getSerial", "()Ljava/lang/String;", (void*)hook_Build_getSerial},
+            {"getRadioVersion", "()Ljava/lang/String;", (void*)hook_Build_getRadioVersion},
         };
-        api->hookJniNativeMethods(env, "android/os/Build", build_methods, 1);
+        api->hookJniNativeMethods(env, "android/os/Build", build_methods, 2);
 
-        JNINativeMethod telephony_methods[] = {
-            {"getImei", "()Ljava/lang/String;", (void*)hook_Telephony_getImei},
-            {"getDeviceId", "()Ljava/lang/String;", (void*)hook_Telephony_getDeviceId},
-            {"getLine1Number", "()Ljava/lang/String;", (void*)hook_Telephony_getLine1Number},
-            {"getSubscriberId", "()Ljava/lang/String;", (void*)hook_Telephony_getSubscriberId},
-            {"getMeid", "()Ljava/lang/String;", (void*)hook_Telephony_getMeid},
+        JNINativeMethod tel_methods[] = {
+            {"getImei", "()Ljava/lang/String;", (void*)hook_Tel_getImei},
+            {"getDeviceId", "()Ljava/lang/String;", (void*)hook_Tel_getDeviceId},
+            {"getLine1Number", "()Ljava/lang/String;", (void*)hook_Tel_getLine1Number},
+            {"getSubscriberId", "()Ljava/lang/String;", (void*)hook_Tel_getSubscriberId},
+            {"getMeid", "()Ljava/lang/String;", (void*)hook_Tel_getMeid},
         };
-        api->hookJniNativeMethods(env, "android/telephony/TelephonyManager", telephony_methods, 5);
+        api->hookJniNativeMethods(env, "android/telephony/TelephonyManager", tel_methods, 5);
 
-        LOGI("[hook] JNI 方法已替换 (Build getSerial + Telephony getImei等)");
-        LOGI("[hook] ColaManga Zygisk 模块 hook 完成");
+        JNINativeMethod wifi_methods[] = {
+            {"getMacAddress", "()Ljava/lang/String;", (void*)hook_Wifi_getMac},
+        };
+        api->hookJniNativeMethods(env, "android/net/wifi/WifiInfo", wifi_methods, 1);
+
+        JNINativeMethod netif_methods[] = {
+            {"getHardwareAddress", "()[B", (void*)hook_Netif_getHardwareAddr},
+        };
+        api->hookJniNativeMethods(env, "java/net/NetworkInterface", netif_methods, 1);
+
+        JNINativeMethod drm_methods[] = {
+            {"getPropertyByteArray", "(Ljava/lang/String;)[B", (void*)hook_MediaDrm_getProperty},
+        };
+        api->hookJniNativeMethods(env, "android/media/MediaDrm", drm_methods, 1);
+
+        LOGI("[hook] JNI: Build(2)+Telephony(5)+Wifi(1)+Netif(1)+MediaDrm(1) 已替换");
+        LOGI("[hook] ColaManga 纯 Zygisk 模块 hook 完成");
     }
 
     void preServerSpecialize(ServerSpecializeArgs*) override {}
