@@ -106,7 +106,9 @@ var HOOKS=[
  {k:'hook_jni',          n:'JNI设备标识',     d:'IMEI/MAC/Widevine/序列号'},
  {k:'file_sandbox',      n:'文件沙箱总开关',  d:'阻断其他 app 私有数据'},
  {k:'hide_maps',         n:'隐藏maps',        d:'掩盖 inline hook trampoline'},
- {k:'net_blocklist',     n:'反下发阻断',      d:'拒连 blocklist 风控域名'}
+ {k:'net_blocklist',     n:'反下发阻断',      d:'拒连 blocklist 风控域名'},
+ {k:'hook_read',         n:'内容scrub',       d:'read/pread64 抹敏感串'},
+ {k:'hook_ssl_unlock',   n:'SSL解锁注入',     d:'vipflag false→true'}
 ];
 
 function loadHooks(){

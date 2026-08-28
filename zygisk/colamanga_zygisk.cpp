@@ -77,6 +77,8 @@ struct HookCfg {
     int hook_connect      = 1;
     int hook_getaddrinfo  = 1;
     int hook_jni          = 1;
+    int hook_read         = 1;   // read/pread64 内容级 scrub（maps 兜底，风控 syscall 直读也过滤）
+    int hook_ssl_unlock   = 1;   // SSL_read 响应注入解锁（vipflag false→true）
     int file_sandbox      = 1;   // 文件沙箱：阻断其他 app 私有数据
     int hide_maps         = 1;   // 隐藏 /proc/self/maps（掩盖 inline hook trampoline）
     int net_blocklist     = 1;   // 反服务器下发：阻断风控域名
@@ -122,6 +124,8 @@ static void read_hooks_conf() {
             else if (!strncmp(p, "hook_connect=", 13))     g_cfg.hook_connect     = conf_get_int(p);
             else if (!strncmp(p, "hook_getaddrinfo=", 17)) g_cfg.hook_getaddrinfo = conf_get_int(p);
             else if (!strncmp(p, "hook_jni=", 9))          g_cfg.hook_jni         = conf_get_int(p);
+            else if (!strncmp(p, "hook_read=", 10))        g_cfg.hook_read        = conf_get_int(p);
+            else if (!strncmp(p, "hook_ssl_unlock=", 17))  g_cfg.hook_ssl_unlock  = conf_get_int(p);
             else if (!strncmp(p, "file_sandbox=", 13))     g_cfg.file_sandbox     = conf_get_int(p);
             else if (!strncmp(p, "hide_maps=", 10))        g_cfg.hide_maps        = conf_get_int(p);
             else if (!strncmp(p, "net_blocklist=", 14))    g_cfg.net_blocklist    = conf_get_int(p);
@@ -191,10 +195,25 @@ static void load_config() {
 }
 
 // ====== inline hook（多 hook 独立 trampoline）======
-#define MAX_HOOKS 16
+#define MAX_HOOKS 24
+#define TRAMP_PER_HOOK 64
 struct HookEntry { void* target; void* tramp; unsigned char orig[16]; };
 static HookEntry g_hooks[MAX_HOOKS];
 static int g_hook_count = 0;
+
+// 反检测：trampoline 不用 mmap 匿名 RX 页（风控扫 /proc/self/maps 会发现新匿名可执行段），
+// 改用模块 .so 自己的静态缓冲——已随模块映射，不产生新的匿名段，maps 里无异常痕迹
+__attribute__((aligned(4096)))
+static unsigned char g_tramp_pool[MAX_HOOKS * TRAMP_PER_HOOK];
+static bool g_tramp_pool_rw = false;
+
+static void arm_tramp_pool() {
+    if (g_tramp_pool_rw) return;
+    uintptr_t page = (uintptr_t)g_tramp_pool & ~0xFFFULL;
+    size_t len = (sizeof(g_tramp_pool) + 0xFFF) & ~0xFFFULL;
+    mprotect((void*)page, len, PROT_READ|PROT_WRITE|PROT_EXEC);
+    g_tramp_pool_rw = true;
+}
 
 static void write_hook_status(const char* name, void* target, void* tramp) {
     FILE* f = fopen("/data/adb/modules/colamanga_mod/run/hooks_status.txt", "a");
@@ -206,11 +225,11 @@ static void write_hook_status(const char* name, void* target, void* tramp) {
 
 static void* inline_hook(const char* name, void* target, void* hook_fn) {
     if (!target || !hook_fn || g_hook_count >= MAX_HOOKS) return nullptr;
+    arm_tramp_pool();
     HookEntry& e = g_hooks[g_hook_count];
     e.target = target;
     memcpy(e.orig, target, 16);
-    e.tramp = mmap(nullptr, 4096, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-    if (e.tramp == MAP_FAILED) return nullptr;
+    e.tramp = g_tramp_pool + g_hook_count * TRAMP_PER_HOOK;
     unsigned char* t = (unsigned char*)e.tramp;
     memcpy(t, e.orig, 16);
     *(uint32_t*)(t+16) = 0x58000050;  // LDR X17, [PC,#8]
@@ -481,6 +500,74 @@ static int hook_getaddrinfo(const char* node, const char* service, const struct 
     return ((getaddrinfo_t)tramp_getaddrinfo)(node, service, hints, res);
 }
 
+// ====== read / pread64（内容级 scrub，反检测兜底：风控 syscall 直读也过滤）======
+static void* tramp_read = nullptr;
+static void* tramp_pread64 = nullptr;
+typedef ssize_t (*read_t)(int, void*, size_t);
+typedef ssize_t (*pread64_t)(int, void*, size_t, off64_t);
+
+static void scrub_sensitive(char* buf, ssize_t len) {
+    static const char* kws[] = {
+        "colamanga_mod", "ColaManga", "frida", "gum-js-loop", "gadget",
+        "magisk", "Magisk", "KernelSU", "zygisk", "Zygisk",
+        "riru", "Riru", "Xposed", "xposed", "lsposed", "LSPosed", nullptr
+    };
+    for (int i = 0; kws[i]; i++) {
+        size_t kl = strlen(kws[i]);
+        for (ssize_t j = 0; j + (ssize_t)kl <= len; j++) {
+            if (memcmp(buf + j, kws[i], kl) == 0) {
+                memset(buf + j, ' ', kl);
+                j += kl - 1;
+            }
+        }
+    }
+}
+
+static ssize_t hook_read(int fd, void* buf, size_t count) {
+    ssize_t n = ((read_t)tramp_read)(fd, buf, count);
+    if (n > 0 && buf && g_cfg.hook_read && g_cfg.hide_maps) {
+        scrub_sensitive((char*)buf, n);
+    }
+    return n;
+}
+
+static ssize_t hook_pread64(int fd, void* buf, size_t count, off64_t off) {
+    ssize_t n = ((pread64_t)tramp_pread64)(fd, buf, count, off);
+    if (n > 0 && buf && g_cfg.hook_read && g_cfg.hide_maps) {
+        scrub_sensitive((char*)buf, n);
+    }
+    return n;
+}
+
+// ====== SSL_read 响应注入解锁（vipflag false→true，等长替换）======
+static void* tramp_ssl_read = nullptr;
+typedef int (*ssl_read_t)(void*, void*, int);
+
+static void patch_vipflag(char* buf, ssize_t len) {
+    static const char vf[] = "vipflag";
+    static const char fls[] = "false";
+    static const char tru[] = "true ";  // 5 字节，与 "false" 等长
+    for (ssize_t i = 0; i + 7 <= len; i++) {
+        if (memcmp(buf + i, vf, 7) == 0) {
+            for (ssize_t j = i + 7; j + 5 <= len && j < i + 96; j++) {
+                if (memcmp(buf + j, fls, 5) == 0) {
+                    memcpy(buf + j, tru, 5);
+                    LOGI("[UNLOCK] vipflag false→true 注入成功");
+                    return;
+                }
+            }
+        }
+    }
+}
+
+static int hook_ssl_read(void* ssl, void* buf, int num) {
+    int n = ((ssl_read_t)tramp_ssl_read)(ssl, buf, num);
+    if (n > 0 && buf && g_cfg.hook_ssl_unlock) {
+        patch_vipflag((char*)buf, n);
+    }
+    return n;
+}
+
 // ====== JNI hook：假字符串/byte[] ======
 static jstring jstr(JNIEnv* env, const char* s) { return env->NewStringUTF(s); }
 static jbyteArray jbytes(JNIEnv* env, const char* hex) {
@@ -551,7 +638,7 @@ public:
         FILE* sf = fopen("/data/adb/modules/colamanga_mod/run/hooks_status.txt", "w");
         if (sf) fclose(sf);
 
-        // 1. inline hook libc（14 个）
+        // 1. inline hook libc（17 个：含 read/pread64 scrub + SSL_read 解锁）
         void* fn;
         tramp_property   = inline_hook("property_get", dlsym(RTLD_DEFAULT, "__system_property_get"), (void*)hook_property_get);
         tramp_property_cb= inline_hook("property_read_cb", dlsym(RTLD_DEFAULT, "__system_property_read_callback"), (void*)hook_property_read_cb);
@@ -567,7 +654,10 @@ public:
         tramp_uname      = inline_hook("uname", dlsym(RTLD_DEFAULT, "uname"), (void*)hook_uname);
         tramp_connect    = inline_hook("connect", dlsym(RTLD_DEFAULT, "connect"), (void*)hook_connect);
         tramp_getaddrinfo= inline_hook("getaddrinfo", dlsym(RTLD_DEFAULT, "getaddrinfo"), (void*)hook_getaddrinfo);
-        LOGI("[hook] libc 14 个 inline hook 完成");
+        tramp_read       = inline_hook("read", dlsym(RTLD_DEFAULT, "read"), (void*)hook_read);
+        tramp_pread64    = inline_hook("pread64", dlsym(RTLD_DEFAULT, "pread64"), (void*)hook_pread64);
+        tramp_ssl_read   = inline_hook("SSL_read", dlsym(RTLD_DEFAULT, "SSL_read"), (void*)hook_ssl_read);
+        LOGI("[hook] libc inline hook 完成（含 read/pread64 scrub + SSL_read 解锁）");
 
         // 2. JNI native 方法 hook（设备标识）——每个独立 try-catch，失败自动降级不崩
         if (g_cfg.hook_jni) {
