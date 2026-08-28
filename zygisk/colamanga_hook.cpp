@@ -1,6 +1,7 @@
-// colamanga_hook.cpp - 安全版 v3
-// hook：__system_property_get（假属性，从 device_id.json 读取）+ connect/getaddrinfo（抓包）
-// 日志：直接输出 logcat（不依赖 LSPosed 日志系统，绕过 zygisk next 问题）
+// colamanga_hook.cpp - v4 反检测版
+// hook：__system_property_get(假属性) + ptrace(反调试) + access(隐藏frida/root文件) + connect/getaddrinfo(抓包)
+// 全部安全透传，不 hook read/openat（避免闪退）
+// 日志：logcat 直接输出
 #include <jni.h>
 #include <cstring>
 #include <cstdlib>
@@ -10,6 +11,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/ptrace.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -20,7 +22,7 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
-// 假属性（从 device_id.json 读取，失败用默认）
+// ===== 假属性（从 device_id.json 读取）=====
 static char s_serialno[64] = "RMU48KXQN12PZ7C9";
 static char s_fingerprint[128] = "Xiaomi/socrates/socrates:13/TKQ1.221114.001/V14.0.4.0.TLCCNXM:user/release-keys";
 static char s_model[64] = "2201123C";
@@ -39,38 +41,30 @@ static char s_sdk[16] = "33";
 static char s_type[16] = "user";
 static char s_tags[16] = "release-keys";
 
-// 从 JSON 读取字符串值（简单解析）
+// 反检测开关（从 settings.conf 读取，WebUI 实时改）
+static int anti_debug_enabled = 1;
+static int hide_root_enabled = 1;
+
 static void json_get_str(const char* json, const char* key, char* out, int outlen) {
-    char pat[128];
-    snprintf(pat, sizeof(pat), "\"%s\"\\s*:\\s*\"", key);
-    const char* p = json;
-    // 找 key
-    const char* k = strstr(p, key);
+    const char* k = strstr(json, key);
     if (!k) return;
-    // 找冒号后的引号
     const char* q = strchr(k, ':');
     if (!q) return;
     q = strchr(q, '"');
     if (!q) return;
-    q++; // 跳到值的开头
+    q++;
     int i = 0;
-    while (*q && *q != '"' && i < outlen - 1) {
-        out[i++] = *q++;
-    }
+    while (*q && *q != '"' && i < outlen - 1) out[i++] = *q++;
     out[i] = 0;
 }
 
 static void load_device_config() {
     FILE* f = fopen("/data/adb/modules/colamanga_mod/config/device_id.json", "r");
-    if (!f) { LOGI("[cfg] 无 device_id.json，用默认假属性"); return; }
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
+    if (!f) return;
+    fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
     if (sz <= 0 || sz > 4096) { fclose(f); return; }
     char* json = (char*)malloc(sz + 1);
-    fread(json, 1, sz, f);
-    json[sz] = 0;
-    fclose(f);
+    fread(json, 1, sz, f); json[sz] = 0; fclose(f);
     json_get_str(json, "serialno", s_serialno, sizeof(s_serialno));
     json_get_str(json, "fingerprint", s_fingerprint, sizeof(s_fingerprint));
     json_get_str(json, "model", s_model, sizeof(s_model));
@@ -89,13 +83,27 @@ static void load_device_config() {
     json_get_str(json, "type", s_type, sizeof(s_type));
     json_get_str(json, "tags", s_tags, sizeof(s_tags));
     free(json);
-    LOGI("[cfg] 已加载 device_id.json: %s %s serial=%s", s_brand, s_model, s_serialno);
+    LOGI("[cfg] 设备=%s %s serial=%s", s_brand, s_model, s_serialno);
 }
 
-// ====== inline hook ======
-#define MAX_HOOKS 4
+// 每次 ptrace/access 调用时重读开关（实时生效）
+static void refresh_flags() {
+    FILE* f = fopen("/data/adb/modules/colamanga_mod/config/settings.conf", "r");
+    if (!f) return;
+    char line[128];
+    while (fgets(line, sizeof(line), f)) {
+        if (strstr(line, "anti_debug=0")) anti_debug_enabled = 0;
+        else if (strstr(line, "anti_debug=1")) anti_debug_enabled = 1;
+        else if (strstr(line, "hide_root=0")) hide_root_enabled = 0;
+        else if (strstr(line, "hide_root=1")) hide_root_enabled = 1;
+    }
+    fclose(f);
+}
+
+// ====== inline hook 框架 ======
+#define MAX_HOOKS 8
 struct HookEntry { void* tramp; unsigned char orig[16]; };
-static HookEntry g_h[4];
+static HookEntry g_h[MAX_HOOKS];
 static int g_n = 0;
 
 static void* hook_tramp(const char* name, void* target, void* hook_fn) {
@@ -149,14 +157,47 @@ static int hook_property_get(const char* name, char* value, const char* default_
         else if (!strcmp(name, "ro.boot.flash.locked")) fake = "1";
         else if (!strcmp(name, "ro.boot.vbmeta.device_state")) fake = "locked";
     }
-    if (fake) {
-        if (value) { strncpy(value, fake, 91); value[91] = 0; }
-        return (int)strlen(fake);
-    }
+    if (fake) { if (value) { strncpy(value, fake, 91); value[91] = 0; } return (int)strlen(fake); }
     return ((property_get_t)tramp_property)(name, value, default_value);
 }
 
-// ====== connect（抓包）====== 
+// ====== ptrace（反调试，WebUI 实时开关）======
+static void* tramp_ptrace = nullptr;
+typedef long (*ptrace_t)(int, pid_t, void*, void*);
+static long hook_ptrace(int request, pid_t pid, void* addr, void* data) {
+    refresh_flags();
+    if (anti_debug_enabled) {
+        // 反调试：TRACEME/ATTACH 返回 0（假装成功，让检测以为没被调试），其余透传
+        if (request == PTRACE_TRACEME) return 0;
+        if (request == PTRACE_ATTACH) { errno = 0; return -1; }
+        // PTRACE_KILL/其他：透传
+    }
+    return ((ptrace_t)tramp_ptrace)(request, pid, addr, data);
+}
+
+// ====== access（隐藏 frida/root 文件，WebUI 实时开关）======
+static void* tramp_access = nullptr;
+typedef int (*access_t)(const char*, int);
+static int is_blacklisted_file(const char* path) {
+    if (!path) return 0;
+    const char* kws[] = {"frida", "gum-js-loop", "gmain", "linjector", "magisk", "/su", "supersu",
+                          "kernelsu", "/ksu", "apatch", "xposed", "lsposed", "riru", "zygisk",
+                          "re.frida", "gadget", nullptr};
+    for (int i = 0; kws[i]; i++) {
+        if (strstr(path, kws[i])) return 1;
+    }
+    return 0;
+}
+static int hook_access(const char* path, int mode) {
+    refresh_flags();
+    if (hide_root_enabled && is_blacklisted_file(path)) {
+        errno = ENOENT;
+        return -1;
+    }
+    return ((access_t)tramp_access)(path, mode);
+}
+
+// ====== connect（抓包）======
 static void* tramp_connect = nullptr;
 typedef int (*connect_t)(int, const struct sockaddr*, socklen_t);
 static int hook_connect(int sockfd, const struct sockaddr* addr, socklen_t addrlen) {
@@ -183,15 +224,21 @@ JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     if (fd >= 0) { read(fd, cmd, sizeof(cmd)-1); close(fd); }
     bool isTarget = (strstr(cmd, "com.hswl.car_owner") || strstr(cmd, "com.hswl.cargo_owner"));
     if (isTarget) {
-        LOGI("[init] Target=%s 加载设备配置并安装hook", cmd);
+        LOGI("[init] Target=%s 加载配置", cmd);
         load_device_config();
+        refresh_flags();
         void* fn = dlsym(RTLD_DEFAULT, "__system_property_get");
         tramp_property = hook_tramp("__system_property_get", fn, (void*)hook_property_get);
+        fn = dlsym(RTLD_DEFAULT, "ptrace");
+        tramp_ptrace = hook_tramp("ptrace", fn, (void*)hook_ptrace);
+        fn = dlsym(RTLD_DEFAULT, "access");
+        tramp_access = hook_tramp("access", fn, (void*)hook_access);
         fn = dlsym(RTLD_DEFAULT, "connect");
         tramp_connect = hook_tramp("connect", fn, (void*)hook_connect);
         fn = dlsym(RTLD_DEFAULT, "getaddrinfo");
         tramp_getaddrinfo = hook_tramp("getaddrinfo", fn, (void*)hook_getaddrinfo);
-        LOGI("[init] hook 安装完成: property=%p net=%p dns=%p", tramp_property, tramp_connect, tramp_getaddrinfo);
+        LOGI("[init] 5 hook 完成: property=%p ptrace=%p access=%p net=%p dns=%p",
+             tramp_property, tramp_ptrace, tramp_access, tramp_connect, tramp_getaddrinfo);
     }
     return JNI_VERSION_1_6;
 }
