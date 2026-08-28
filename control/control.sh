@@ -221,7 +221,54 @@ EOF
       *) echo "{\"usage\":\"safe_mode on|off\"}" ;;
     esac
     ;;
+  logmon)
+    # 按需开启/停止日志监控（防发烫，不常驻）
+    case "$2" in
+      start)
+        PID=$(pidof com.hswl.cargo_owner.cargo_owner 2>/dev/null | tr ' ' '\n' | head -1)
+        [ -z "$PID" ] && PID=$(pidof com.hswl.car_owner 2>/dev/null | tr ' ' '\n' | head -1)
+        [ -z "$PID" ] && { echo "{\"error\":\"漫城未运行\"}"; exit 1; }
+        nohup logcat --pid=$PID -v time 2>/dev/null | grep -iE 'cargo|mymanga|byazt|starlink|security|reward|unlock|device|adCount|reportAd|ColaManga' >> "$MODDIR/logs/app.log" 2>/dev/null &
+        echo $! > "$MODDIR/run/logmon.pid"
+        echo "{\"logmon\":\"started\",\"pid\":\"$(cat $MODDIR/run/logmon.pid)\"}"
+        ;;
+      stop)
+        [ -f "$MODDIR/run/logmon.pid" ] && kill "$(cat "$MODDIR/run/logmon.pid")" 2>/dev/null
+        rm -f "$MODDIR/run/logmon.pid"
+        echo "{\"logmon\":\"stopped\"}"
+        ;;
+      *) echo "{\"usage\":\"logmon start|stop\"}" ;;
+    esac
+    ;;
+  capture)
+    # 按需开启/停止网络抓包（防发烫，不常驻）
+    case "$2" in
+      start)
+        nohup sh -c '
+          while true; do
+            for pkg in com.hswl.car_owner com.hswl.cargo_owner.cargo_owner; do
+              PID=$(pidof $pkg 2>/dev/null | tr " " "\n" | head -1)
+              [ -z "$PID" ] && continue
+              UID=$(awk "/^Uid/{print \$2}" /proc/$PID/status 2>/dev/null)
+              [ -z "$UID" ] && continue
+              TS=$(date "+%H:%M:%S")
+              cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk -v u=$UID -v t=$TS "{if(\$8==u && \$4!=\"0A\") print t, \$2, \$3, \$4}" >> /data/adb/modules/colamanga_mod/logs/network.log 2>/dev/null
+            done
+            sleep 2
+          done
+        ' > /dev/null 2>&1 &
+        echo $! > "$MODDIR/run/capture.pid"
+        echo "{\"capture\":\"started\"}"
+        ;;
+      stop)
+        [ -f "$MODDIR/run/capture.pid" ] && kill "$(cat "$MODDIR/run/capture.pid")" 2>/dev/null
+        rm -f "$MODDIR/run/capture.pid"
+        echo "{\"capture\":\"stopped\"}"
+        ;;
+      *) echo "{\"usage\":\"capture start|stop\"}" ;;
+    esac
+    ;;
   *)
-    echo "Usage: control.sh <status|toggle|set_profile|randomize|log|clear_log|kill_app|get_props|connections|diagnosis|frida|snapshot|restore|safe_mode>"
+    echo "Usage: control.sh <status|toggle|set_profile|randomize|log|clear_log|kill_app|get_props|connections|diagnosis|frida|snapshot|restore|safe_mode|logmon|capture>"
     ;;
 esac
