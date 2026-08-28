@@ -101,8 +101,8 @@ EOF
     ;;
   kill_app)
     # 强制停止漫城
-    su -c "am force-stop com.hswl.car_owner" 2>/dev/null
-    su -c "am force-stop com.hswl.cargo_owner.cargo_owner" 2>/dev/null
+    am force-stop com.hswl.car_owner 2>/dev/null || su -c "am force-stop com.hswl.car_owner" 2>/dev/null
+    am force-stop com.hswl.cargo_owner.cargo_owner 2>/dev/null || su -c "am force-stop com.hswl.cargo_owner.cargo_owner" 2>/dev/null
     echo "{\"status\":\"killed\"}"
     ;;
   get_props)
@@ -298,8 +298,8 @@ EOF
     resetprop ro.build.fingerprint "Xiaomi/socrates/socrates:13/TKQ1.221114.001/V14.0.4.0.TLCCNXM:user/release-keys"
     resetprop ro.product.model "2201123C"
     # 杀 app（重启后 so/hook 读新值）
-    su -c "am force-stop com.hswl.car_owner" 2>/dev/null
-    su -c "am force-stop com.hswl.cargo_owner.cargo_owner" 2>/dev/null
+    am force-stop com.hswl.car_owner 2>/dev/null || su -c "am force-stop com.hswl.car_owner" 2>/dev/null
+    am force-stop com.hswl.cargo_owner.cargo_owner 2>/dev/null || su -c "am force-stop com.hswl.cargo_owner.cargo_owner" 2>/dev/null
     echo "{\"status\":\"randomized\",\"serialno\":\"$SN\",\"提示\":\"已生效，重新打开漫城\"}"
     ;;
   lspd_log)
@@ -356,8 +356,8 @@ EOF
       brand) resetprop ro.product.brand "$VAL" ;;
     esac
     # 杀 app 让新值生效
-    su -c "am force-stop com.hswl.car_owner" 2>/dev/null
-    su -c "am force-stop com.hswl.cargo_owner.cargo_owner" 2>/dev/null
+    am force-stop com.hswl.car_owner 2>/dev/null || su -c "am force-stop com.hswl.car_owner" 2>/dev/null
+    am force-stop com.hswl.cargo_owner.cargo_owner 2>/dev/null || su -c "am force-stop com.hswl.cargo_owner.cargo_owner" 2>/dev/null
     echo "{\"set\":\"$KEY\",\"value\":\"$VAL\",\"提示\":\"已生效，重新打开漫城\"}"
     ;;
   hooks_status)

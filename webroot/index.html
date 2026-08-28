@@ -6,90 +6,183 @@
 <title>Colamanga Breaker</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:sans-serif;background:#0a0e17;color:#e0e0e0;padding:8px;max-width:900px;margin:0 auto}
-h1{font-size:16px;color:#00d9f5}
+body{font-family:sans-serif;background:#0a0e17;color:#e0e0e0;padding:8px;padding-bottom:24px}
+h1{font-size:16px;color:#00d9f5;margin-bottom:4px}
 .sub{font-size:10px;color:#555;margin-bottom:8px}
 .c{background:#131722;border:1px solid #1e2536;border-radius:6px;padding:8px;margin-bottom:8px}
 .c h2{font-size:13px;color:#00d9f5;margin-bottom:6px}
-.btn{display:inline-block;padding:6px 12px;margin:2px;border:0;border-radius:4px;font-size:11px;cursor:pointer;text-decoration:none}
+.btn{display:inline-block;padding:5px 10px;margin:2px;border:0;border-radius:4px;font-size:11px;cursor:pointer;text-decoration:none}
 .b1{background:#00d9f5;color:#000}.b2{background:#ffa502;color:#000}.b3{background:#ff4757;color:#fff}.b4{background:#2a2f3e;color:#aaa;border:1px solid #3a3f4e}
-.out{background:#0a0e17;border:1px solid #1e2536;border-radius:4px;padding:6px;font-family:monospace;font-size:10px;min-height:120px;max-height:350px;overflow:auto;white-space:pre-wrap;word-break:break-all;color:#0f0;margin-top:4px}
-.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
-.g{background:#00f5a0}.r{background:#ff4757}.y{background:#ffa502}
+pre{background:#0a0e17;border:1px solid #1e2536;border-radius:4px;padding:6px;font-size:10px;max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-all;color:#0f0}
+.hook-grid{display:flex;flex-wrap:wrap;gap:6px}
+.hk{flex:1 1 100%;display:flex;align-items:center;justify-content:space-between;background:#1a2030;border:1px solid #2a3145;border-radius:5px;padding:6px 8px}
+.hk .name{font-size:11px;font-weight:700}
+.hk .desc{font-size:9px;color:#667;margin-top:2px}
+.hk .state{font-size:9px;padding:2px 7px;border-radius:8px;font-weight:700}
+.st-on{background:#064d1f;color:#3df07a}
+.st-off{background:#3a1a1a;color:#ff6b6b}
+.tgl{font-size:11px;padding:3px 9px;border:0;border-radius:4px;cursor:pointer;margin-left:4px}
+.tgl-on{background:#00d9f5;color:#000}
+.tgl-off{background:#ff4757;color:#fff}
+.refresh{font-size:10px;padding:3px 8px;background:#2a2f3e;color:#7f8ea0;border:0;border-radius:4px;cursor:pointer}
 </style>
 </head>
 <body>
-<h1>⚡ Colamanga Breaker</h1>
-<div class="sub" id="sub">com.hswl.car_owner / com.hswl.cargo_owner.cargo_owner</div>
+<h1>⚡ Colamanga Breaker v3.5</h1>
+<div class="sub">纯 Zygisk 模块 · 系统原生级 · 不依赖 LSPosed</div>
 
 <div class="c">
-<h2><span class="dot r" id="sd"></span> 状态 <span id="bridge" style="font-size:10px;color:#888"></span></h2>
-<button class="btn b4" onclick="run('status')">📊 状态</button>
-<button class="btn b1" onclick="run('diagnosis')">🔍 诊断</button>
-<button class="btn b4" onclick="run('lspd_log')">📜 模块日志</button>
-<button class="btn b4" onclick="run('servers')">🌐 服务器追踪</button>
+<h2>🎯 Hook 仪表盘（实时开关）
+  <button class="refresh" onclick="loadHooks()">🔄 刷新</button>
+</h2>
+<div class="hook-grid" id="hooks"><span style="font-size:10px;color:#667">加载中…</span></div>
 </div>
 
 <div class="c">
-<h2>📱 设备身份（实时改，杀app生效不重启手机）</h2>
-<button class="btn b4" onclick="run('set_profile profile_xiaomi')">小米</button>
-<button class="btn b4" onclick="run('set_profile profile_oneplus')">一加</button>
-<button class="btn b4" onclick="run('set_profile profile_oppo')">OPPO</button>
-<button class="btn b2" onclick="run('randomize_device')">🎲 随机新设备</button>
-<button class="btn b4" onclick="run('get_props')">📋 查看属性</button>
+<h2>🔧 控制</h2>
+<a class="btn b1" href="javascript:run('diagnosis')">🔍 诊断</a>
+<a class="btn b4" href="javascript:run('status')">📊 状态</a>
+<a class="btn b4" href="javascript:run('get_props')">📋 属性</a>
+<a class="btn b4" href="javascript:run('connections')">🌐 连接</a>
+<a class="btn b4" href="javascript:run('hooks_status')">🧩 Hook状态</a>
+<a class="btn b2" href="javascript:run('kill_app')">⏹ 停止漫城</a>
 </div>
 
 <div class="c">
-<h2>🔧 监控（按需开，防发烫）</h2>
-<button class="btn b1" onclick="run('capture start')">▶️ 开抓包</button>
-<button class="btn b3" onclick="run('capture stop')">⏹ 停抓包</button>
-<button class="btn b1" onclick="run('logmon start')">▶️ 开日志监控</button>
-<button class="btn b3" onclick="run('logmon stop')">⏹ 停日志</button>
+<h2>📱 设备身份</h2>
+<a class="btn b4" href="javascript:run('set_profile profile_xiaomi')">小米</a>
+<a class="btn b4" href="javascript:run('set_profile profile_oneplus')">一加</a>
+<a class="btn b4" href="javascript:run('set_profile profile_oppo')">OPPO</a>
+<a class="btn b2" href="javascript:run('randomize')">🎲 随机</a>
+<a class="btn b4" href="javascript:run('randomize_device')">✨ 全新设备(免重启)</a>
+<a class="btn b4" href="javascript:run('toggle global_resetprop')">全局属性</a>
 </div>
 
 <div class="c">
-<h2>🛡 保护</h2>
-<button class="btn b4" onclick="run('snapshot')">📸 快照广告数据</button>
-<button class="btn b2" onclick="run('restore')">♻️ 恢复快照</button>
-<button class="btn b3" onclick="run('safe_mode on')">🛑 安全模式</button>
-<button class="btn b4" onclick="run('safe_mode off')">✅ 恢复Hook</button>
-<button class="btn b2" onclick="run('kill_app')">⏹ 停止漫城</button>
+<h2>🛡 保护 / 快照</h2>
+<a class="btn b4" href="javascript:run('snapshot')">📸 快照</a>
+<a class="btn b2" href="javascript:run('restore')">♻️ 恢复</a>
+<a class="btn b3" href="javascript:run('safe_mode on')">🛑 安全模式</a>
+<a class="btn b4" href="javascript:run('safe_mode off')">✅ 恢复Hook</a>
 </div>
 
 <div class="c">
-<h2>🔌 Frida</h2>
-<button class="btn b1" onclick="run('frida start')">🚀 启动</button>
-<button class="btn b3" onclick="run('frida stop')">⏹ 停止</button>
-<button class="btn b4" onclick="run('frida status')">📊 状态</button>
+<h2>🔌 Frida / 监控</h2>
+<a class="btn b1" href="javascript:run('frida start')">🚀 Frida</a>
+<a class="btn b3" href="javascript:run('frida stop')">⏹ 停止</a>
+<a class="btn b4" href="javascript:run('logmon start')">📡 日志监控</a>
+<a class="btn b4" href="javascript:run('capture start')">🌐 抓包</a>
+<a class="btn b3" href="javascript:run('capture stop')">⏹ 停抓包</a>
 </div>
 
 <div class="c">
-<h2>📤 输出</h2>
-<div class="out" id="out">点击按钮执行...</div>
+<h2>📊 日志</h2>
+<a class="btn b4" href="javascript:run('log app 50')">应用</a>
+<a class="btn b4" href="javascript:run('log net 50')">网络</a>
+<a class="btn b4" href="javascript:run('log service 50')">模块</a>
+<a class="btn b4" href="javascript:run('servers')">🌍 服务器画像</a>
+<a class="btn b3" href="javascript:run('clear_log all')">🗑 清空</a>
+</div>
+
+<div class="c">
+<h2>📤 结果</h2>
+<pre id="out">(点击上方按钮查看结果)</pre>
 </div>
 
 <script>
-var MOD='/data/adb/modules/colamanga_mod';
-var CTL=MOD+'/control/control.sh';
-function exec(cmd, cb){
-  if(window.ksu && window.ksu.exec){
-    var cbn='cb'+Math.random().toString(36).slice(2);
-    window[cbn]=function(errno,stdout,stderr){delete window[cbn]; cb(stdout||stderr||'(空)',errno);};
-    window.ksu.exec('sh '+CTL+' '+cmd,'{}',cbn);
-  } else {
-    cb('无桥接：请在 KSU WebUI 中打开，或浏览器访问 http://127.0.0.1:8799',-1);
-  }
+// ===== KSU / Magisk 双兼容调用层 =====
+// KSU WebUI 页面加载在 mui.kernelsu.org 域，不能用 fetch('/api/...')，
+// 必须走 KSU 注入的全局 ksu.exec(command, options, callbackName) 桥接。
+// Magisk WebUI 则走 fetch('/api/...')。这里自动探测。
+
+var CTL = 'sh /data/adb/modules/colamanga_mod/control/control.sh';
+
+function isKsu() {
+  try {
+    var k = (typeof ksu !== 'undefined') ? ksu : window.ksu;
+    return typeof k !== 'undefined' && k && typeof k.exec === 'function';
+  } catch (e) { return false; }
 }
-function run(cmd){
-  var el=document.getElementById('out');
-  el.textContent='执行中: '+cmd+' ...';
-  exec(cmd, function(r,err){
-    el.textContent=r;
-    if(cmd==='status'){ try{var d=JSON.parse(r); if(d.pid1||d.pid2){document.getElementById('sd').className='dot g';}else{document.getElementById('sd').className='dot r';} }catch(e){} }
+
+function ksuExec(cmd) {
+  return new Promise(function (resolve) {
+    var cb = 'exec_cb_' + Date.now() + '_' + Math.floor(Math.random()*1e6);
+    window[cb] = function (errno, stdout, stderr) {
+      delete window[cb];
+      if (stdout && stdout.length) resolve(stdout);
+      else if (stderr && stderr.length) resolve('ERR(' + errno + '): ' + stderr);
+      else resolve('(无输出)');
+    };
+    try { window.ksu.exec('sh -c ' + JSON.stringify(cmd), '{}', cb); }
+    catch (e) { delete window[cb]; resolve('exec 异常: ' + e.message); }
   });
 }
-document.getElementById('bridge').textContent = (window.ksu&&window.ksu.exec)?'[KSU桥接✅]':'[无桥接❌]';
-run('diagnosis');
+
+// 把 control.sh 子命令转成可执行命令，返回结果文本
+function api(cmd) {
+  var full = CTL + ' ' + cmd + ' 2>&1';
+  if (isKsu()) return ksuExec(full);
+  // Magisk / 浏览器降级
+  return fetch('/api/' + cmd).then(function (r) { return r.text(); })
+    .catch(function (e) { return '请求失败(可能非 Magisk WebUI): ' + e.message; });
+}
+
+function run(cmd) {
+  var out = document.getElementById('out');
+  out.textContent = '执行中: ' + cmd + ' ...';
+  api(cmd).then(function (t) { out.textContent = t; });
+}
+
+var HOOKS=[
+ {k:'hook_property',     n:'属性伪装',        d:'ro.* 假值 (__system_property_get)'},
+ {k:'hook_property_cb',  n:'Java属性回调',    d:'SystemProperties.get 全覆盖'},
+ {k:'hook_ptrace',       n:'反调试',          d:'TRACEME=0 / ATTACH=-1'},
+ {k:'hook_access',       n:'文件隐藏',        d:'access 拦 frida/magisk/xposed'},
+ {k:'hook_open',         n:'文件沙箱(open)',  d:'open 拦敏感路径'},
+ {k:'hook_openat',       n:'文件沙箱(openat)',d:'openat 拦敏感路径'},
+ {k:'hook_stat',         n:'路径枚举隐藏',    d:'stat/lstat/fstatat'},
+ {k:'hook_readlink',     n:'FD路径隐藏',      d:'readlink/readlinkat 掩 .so 真实路径'},
+ {k:'hook_uname',        n:'内核伪装',        d:'清 KernelSU/Magisk 标记'},
+ {k:'hook_connect',      n:'抓包+反下发',     d:'IP:port 记录 + 阻断风控'},
+ {k:'hook_getaddrinfo',  n:'DNS+反下发',      d:'域名记录 + 阻断风控'},
+ {k:'hook_jni',          n:'JNI设备标识',     d:'IMEI/MAC/Widevine/序列号'},
+ {k:'hook_read',         n:'内容scrub',       d:'read/pread64 抹敏感串'},
+ {k:'hook_ssl_unlock',   n:'SSL解锁注入',     d:'vipflag false→true'},
+ {k:'file_sandbox',      n:'文件沙箱总开关',  d:'阻断其他 app 私有数据'},
+ {k:'hide_maps',         n:'隐藏maps',        d:'掩盖 inline hook trampoline'},
+ {k:'net_blocklist',     n:'反下发阻断',      d:'拒连 blocklist 风控域名'}
+];
+
+function loadHooks(){
+  var el=document.getElementById('hooks');
+  el.innerHTML='<span style="font-size:10px;color:#667">加载中…</span>';
+  api('hooks_status').then(function(t){
+    var data={};
+    try { data=JSON.parse(t); } catch(e){}
+    var conf=data.conf||{};
+    var loaded={};
+    (data.loaded||[]).forEach(function(h){loaded[h.name]=1});
+    var html='';
+    HOOKS.forEach(function(h){
+      var on=conf[h.k]==='1';
+      var isLoaded=!!loaded[h.k];
+      html+='<div class="hk">'+
+        '<div><div class="name">'+h.n+' '+(isLoaded?'<span style="color:#3df07a;font-size:9px">●已加载</span>':'<span style="color:#667;font-size:9px">○未加载</span>')+'</div>'+
+        '<div class="desc">'+h.d+'</div></div>'+
+        '<div><span class="state '+(on?'st-on':'st-off')+'">'+(on?'ON':'OFF')+'</span>'+
+        '<button class="tgl '+(on?'tgl-off':'tgl-on')+'" onclick="toggleHook(\''+h.k+'\',\''+(on?0:1)+'\')">'+(on?'关闭':'开启')+'</button></div>'+
+      '</div>';
+    });
+    el.innerHTML=html;
+  });
+}
+
+function toggleHook(k,v){
+  api('hooks_toggle '+k+' '+v).then(function(){ loadHooks(); });
+}
+
+loadHooks();
+setInterval(loadHooks,8000);
 </script>
 </body>
 </html>

@@ -560,16 +560,42 @@ typedef int (*ssl_read_t)(void*, void*, int);
 static bool g_ssl_hooked = false;
 static int hook_ssl_read(void*, void*, int);  // 前置声明（实现见下方）
 
-// libflutter.so/libssl.so 在 app 启动后才 dlopen，postAppSpecialize 时 dlsym 拿不到。
+// 精确查找 SSL_read（对齐 Frida 原脚本 findSslRead 逻辑）：
+// 漫城是 Flutter app，HTTPS 流量走 libflutter.so 内置的 BoringSSL，不是系统 libssl.so。
+// RTLD_DEFAULT 可能返回错误的 libssl.so(Conscrypt) 符号 → hook 错库 → 拦不到流量。
+static void* find_ssl_read() {
+    void* h;
+    void* fn;
+    // 1. libflutter.so（BoringSSL，漫城实际走这里）
+    h = dlopen("libflutter.so", RTLD_NOLOAD);
+    if (h) {
+        fn = dlsym(h, "SSL_read");
+        if (fn) { LOGI("[ssl] SSL_read @ libflutter.so %p", fn); return fn; }
+        fn = dlsym(h, "_SSL_read");
+        if (fn) { LOGI("[ssl] _SSL_read @ libflutter.so %p", fn); return fn; }
+    }
+    // 2. libssl.so（Conscrypt，兜底）
+    h = dlopen("libssl.so", RTLD_NOLOAD);
+    if (h) {
+        fn = dlsym(h, "SSL_read");
+        if (fn) { LOGI("[ssl] SSL_read @ libssl.so %p", fn); return fn; }
+    }
+    // 3. RTLD_DEFAULT 最后兜底
+    fn = dlsym(RTLD_DEFAULT, "SSL_read");
+    if (fn) LOGI("[ssl] SSL_read @ default %p", fn);
+    return fn;
+}
+
+// libflutter.so 在 app 启动后才 dlopen，postAppSpecialize 时还不存在。
 // 通过 maybe_reload 的节流路径（每 256 次调用）反复尝试，库一加载就补装。
 static void try_install_ssl() {
     if (g_ssl_hooked || !g_cfg.hook_ssl_unlock) return;
-    void* fn = dlsym(RTLD_DEFAULT, "SSL_read");
+    void* fn = find_ssl_read();
     if (!fn) return;
     tramp_ssl_read = inline_hook("SSL_read", fn, (void*)hook_ssl_read);
     if (tramp_ssl_read) {
         g_ssl_hooked = true;
-        LOGI("[hook] SSL_read 延迟安装成功 @ %p", fn);
+        LOGI("[hook] SSL_read 解锁 hook 安装成功 @ %p", fn);
     }
 }
 

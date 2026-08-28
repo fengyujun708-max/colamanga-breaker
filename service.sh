@@ -12,7 +12,7 @@ SETTINGS=$CONF/settings.conf
 mkdir -p "$CONF" "$LOGS" "$RUN"
 [ -f "$ACTIVE" ] || echo "profile_xiaomi" > "$ACTIVE"
 [ -f "$SETTINGS" ] || cat > "$SETTINGS" <<'EOF'
-global_resetprop=1
+global_resetprop=0
 frida_enabled=0
 app_log_monitor=0
 packet_capture=0
@@ -21,6 +21,9 @@ EOF
 get_prop() { grep -A40 "\[$1\]" "$PROFILES" 2>/dev/null | grep "^$2=" | head -1 | cut -d= -f2; }
 PROFILE=$(cat "$ACTIVE" 2>/dev/null || echo "profile_xiaomi")
 GLOBAL_RP=$(grep '^global_resetprop=' "$SETTINGS" 2>/dev/null | cut -d= -f2)
+# 强制关闭：即使老用户的 settings.conf 残留 global_resetprop=1，也绝不做全局 resetprop
+# （zygote 前改 ro.build.fingerprint/sdk 会污染系统，带崩 Zygisk Next / LSPosed）
+GLOBAL_RP=0
 
 if [ "$GLOBAL_RP" = "1" ]; then
     # ===== 读取全套假设备属性 =====
@@ -79,8 +82,9 @@ if [ "$GLOBAL_RP" = "1" ]; then
     [ -n "$BID" ] && resetprop ro.build.display.id "$BID" 2>/dev/null
     [ -n "$INC" ] && resetprop ro.build.version.incremental "$INC"
     [ -n "$SP" ] && resetprop ro.build.version.security_patch "$SP"
-    [ -n "$REL" ] && resetprop ro.build.version.release "$REL"
-    [ -n "$SDK" ] && resetprop ro.build.version.sdk "$SDK"
+    # 注意：不全局改 ro.build.version.sdk/release —— 改错会导致 zygote 按错误 API level
+    # 初始化，把 Zygisk Next / LSPosed / 系统服务一起带崩。SDK/版本伪装由 Zygisk so
+    # 在目标进程内做进程级 hook 实现，无需全局改。
     [ -n "$TYPE" ] && resetprop ro.build.type "$TYPE"
     [ -n "$TAGS" ] && resetprop ro.build.tags "$TAGS"
 

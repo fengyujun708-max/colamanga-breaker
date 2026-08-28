@@ -7,4 +7,4 @@ description=针对 com.hswl.car_owner / com.hswl.cargo_owner.cargo_owner 的全�
 minMagisk=25200
 maxMagisk=27000
 support=clash
-webroot=webui
+webroot=webroot
