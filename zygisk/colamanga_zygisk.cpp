@@ -27,6 +27,8 @@
 #include <netdb.h>
 #include <android/log.h>
 #include <errno.h>
+#include <elf.h>
+#include <link.h>
 
 #define TAG "ColaMangaZygisk"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -563,6 +565,62 @@ typedef int (*ssl_read_t)(void*, void*, int);
 static bool g_ssl_hooked = false;
 static int hook_ssl_read(void*, void*, int);  // 前置声明（实现见下方）
 
+// ===== 手动解析 ELF .dynsym 找隐藏符号 =====
+// dlsym 只能找到导出的 GLOBAL/WEAK 动态符号。Flutter libflutter.so 里的 BoringSSL
+// 符号被 -fvisibility=hidden 编译成 LOCAL，dlsym 找不到——这正是 Frida enumerateSymbols
+// 能命中而原生 dlsym 找不到的原因。
+struct ElfSymIterArg { const char* so_name; uintptr_t base; };
+
+static int elf_sym_iter_cb(struct dl_phdr_info* info, size_t, void* data) {
+    ElfSymIterArg* a = (ElfSymIterArg*)data;
+    if (info->dlpi_name && strstr(info->dlpi_name, a->so_name)) {
+        a->base = info->dlpi_addr;
+        return 1;
+    }
+    return 0;
+}
+
+static void* elf_find_hidden_symbol(const char* so_name, const char* sym_name) {
+    ElfSymIterArg a = { so_name, 0 };
+    dl_iterate_phdr(elf_sym_iter_cb, &a);
+    uintptr_t base = a.base;
+    if (!base) return nullptr;
+
+    const Elf64_Ehdr* eh = (const Elf64_Ehdr*)base;
+    if (memcmp(eh->e_ident, ELFMAG, SELFMAG) != 0 || eh->e_type != ET_DYN) return nullptr;
+
+    // 定位 PT_DYNAMIC → DT_SYMTAB / DT_STRTAB / DT_STRSZ
+    const Elf64_Phdr* ph = (const Elf64_Phdr*)(base + eh->e_phoff);
+    const Elf64_Dyn* dyn = nullptr;
+    for (int i = 0; i < eh->e_phnum; i++) {
+        if (ph[i].p_type == PT_DYNAMIC) { dyn = (const Elf64_Dyn*)(base + ph[i].p_vaddr); break; }
+    }
+    if (!dyn) return nullptr;
+
+    const Elf64_Sym* symtab = nullptr;
+    const char* strtab = nullptr;
+    uintptr_t strsz = 0;
+    for (const Elf64_Dyn* d = dyn; d->d_tag != DT_NULL; d++) {
+        switch (d->d_tag) {
+            case DT_SYMTAB: symtab = (const Elf64_Sym*)(base + d->d_un.d_ptr); break;
+            case DT_STRTAB: strtab = (const char*)(base + d->d_un.d_ptr); break;
+            case DT_STRSZ:  strsz = d->d_un.d_val; break;
+        }
+    }
+    if (!symtab || !strtab || !strsz) return nullptr;
+
+    // 遍历 .dynsym（以 strsz 为上界，遇越界 st_name 提前退出）
+    for (uintptr_t i = 0; i < strsz; i++) {
+        uint32_t no = symtab[i].st_name;
+        if (no >= strsz) break;
+        const char* name = strtab + no;
+        if (name[0] && strcmp(name, sym_name) == 0) {
+            return (void*)(base + symtab[i].st_value);
+        }
+    }
+    return nullptr;
+}
+
 // 精确查找 SSL_read（对齐 Frida 原脚本 findSslRead 逻辑）：
 // 漫城是 Flutter app，HTTPS 流量走 libflutter.so 内置的 BoringSSL，不是系统 libssl.so。
 // RTLD_DEFAULT 可能返回错误的 libssl.so(Conscrypt) 符号 → hook 错库 → 拦不到流量。
@@ -577,6 +635,11 @@ static void* find_ssl_read() {
         fn = dlsym(h, "_SSL_read");
         if (fn) { LOGI("[ssl] _SSL_read @ libflutter.so %p", fn); return fn; }
     }
+    // 1b. libflutter.so 隐藏符号（BoringSSL LOCAL 符号，dlsym 找不到，Frida enumerateSymbols 能）
+    fn = elf_find_hidden_symbol("libflutter.so", "SSL_read");
+    if (fn) { LOGI("[ssl] SSL_read @ libflutter.so(ELF .dynsym LOCAL) %p", fn); return fn; }
+    fn = elf_find_hidden_symbol("libflutter.so", "_SSL_read");
+    if (fn) { LOGI("[ssl] _SSL_read @ libflutter.so(ELF .dynsym LOCAL) %p", fn); return fn; }
     // 2. libssl.so（Conscrypt，兜底）
     h = dlopen("libssl.so", RTLD_NOLOAD);
     if (h) {
