@@ -551,7 +551,7 @@ public:
         FILE* sf = fopen("/data/adb/modules/colamanga_mod/run/hooks_status.txt", "w");
         if (sf) fclose(sf);
 
-        // 1. inline hook libc（12 个）
+        // 1. inline hook libc（14 个）
         void* fn;
         tramp_property   = inline_hook("property_get", dlsym(RTLD_DEFAULT, "__system_property_get"), (void*)hook_property_get);
         tramp_property_cb= inline_hook("property_read_cb", dlsym(RTLD_DEFAULT, "__system_property_read_callback"), (void*)hook_property_read_cb);
@@ -562,18 +562,25 @@ public:
         tramp_stat       = inline_hook("stat", dlsym(RTLD_DEFAULT, "stat"), (void*)hook_stat);
         tramp_lstat      = inline_hook("lstat", dlsym(RTLD_DEFAULT, "lstat"), (void*)hook_lstat);
         tramp_fstatat    = inline_hook("fstatat", dlsym(RTLD_DEFAULT, "fstatat"), (void*)hook_fstatat);
+        tramp_readlink   = inline_hook("readlink", dlsym(RTLD_DEFAULT, "readlink"), (void*)hook_readlink);
+        tramp_readlinkat = inline_hook("readlinkat", dlsym(RTLD_DEFAULT, "readlinkat"), (void*)hook_readlinkat);
         tramp_uname      = inline_hook("uname", dlsym(RTLD_DEFAULT, "uname"), (void*)hook_uname);
         tramp_connect    = inline_hook("connect", dlsym(RTLD_DEFAULT, "connect"), (void*)hook_connect);
         tramp_getaddrinfo= inline_hook("getaddrinfo", dlsym(RTLD_DEFAULT, "getaddrinfo"), (void*)hook_getaddrinfo);
-        LOGI("[hook] libc 12 个 inline hook 完成");
+        LOGI("[hook] libc 14 个 inline hook 完成");
 
-        // 2. JNI native 方法 hook（设备标识）
+        // 2. JNI native 方法 hook（设备标识）——每个独立 try-catch，失败自动降级不崩
         if (g_cfg.hook_jni) {
+            int jni_ok = 0, jni_fail = 0;
+
             JNINativeMethod build_methods[] = {
                 {"getSerial", "()Ljava/lang/String;", (void*)hook_Build_getSerial},
                 {"getRadioVersion", "()Ljava/lang/String;", (void*)hook_Build_getRadioVersion},
             };
-            api->hookJniNativeMethods(env, "android/os/Build", build_methods, 2);
+            try {
+                api->hookJniNativeMethods(env, "android/os/Build", build_methods, 2);
+                jni_ok += 2;
+            } catch (...) { jni_fail += 2; LOGE("[jni] Build hook 注册失败(已降级)"); }
 
             JNINativeMethod tel_methods[] = {
                 {"getImei", "()Ljava/lang/String;", (void*)hook_Tel_getImei},
@@ -582,23 +589,36 @@ public:
                 {"getSubscriberId", "()Ljava/lang/String;", (void*)hook_Tel_getSubscriberId},
                 {"getMeid", "()Ljava/lang/String;", (void*)hook_Tel_getMeid},
             };
-            api->hookJniNativeMethods(env, "android/telephony/TelephonyManager", tel_methods, 5);
+            try {
+                api->hookJniNativeMethods(env, "android/telephony/TelephonyManager", tel_methods, 5);
+                jni_ok += 5;
+            } catch (...) { jni_fail += 5; LOGE("[jni] Telephony hook 注册失败(已降级)"); }
 
             JNINativeMethod wifi_methods[] = {
                 {"getMacAddress", "()Ljava/lang/String;", (void*)hook_Wifi_getMac},
             };
-            api->hookJniNativeMethods(env, "android/net/wifi/WifiInfo", wifi_methods, 1);
+            try {
+                api->hookJniNativeMethods(env, "android/net/wifi/WifiInfo", wifi_methods, 1);
+                jni_ok += 1;
+            } catch (...) { jni_fail += 1; LOGE("[jni] WifiInfo hook 注册失败(已降级)"); }
 
             JNINativeMethod netif_methods[] = {
                 {"getHardwareAddress", "()[B", (void*)hook_Netif_getHardwareAddr},
             };
-            api->hookJniNativeMethods(env, "java/net/NetworkInterface", netif_methods, 1);
+            try {
+                api->hookJniNativeMethods(env, "java/net/NetworkInterface", netif_methods, 1);
+                jni_ok += 1;
+            } catch (...) { jni_fail += 1; LOGE("[jni] NetworkInterface hook 注册失败(已降级)"); }
 
             JNINativeMethod drm_methods[] = {
                 {"getPropertyByteArray", "(Ljava/lang/String;)[B", (void*)hook_MediaDrm_getProperty},
             };
-            api->hookJniNativeMethods(env, "android/media/MediaDrm", drm_methods, 1);
-            LOGI("[hook] JNI 10 个方法已替换");
+            try {
+                api->hookJniNativeMethods(env, "android/media/MediaDrm", drm_methods, 1);
+                jni_ok += 1;
+            } catch (...) { jni_fail += 1; LOGE("[jni] MediaDrm hook 注册失败(已降级)"); }
+
+            LOGI("[jni] 成功=%d 失败=%d（失败项自动降级，不影响 app 运行）", jni_ok, jni_fail);
         }
 
         LOGI("[hook] Colamanga Zygisk v3 全部 hook 完成");
