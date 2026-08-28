@@ -18,6 +18,8 @@
 #pragma once
 
 #include <jni.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #define ZYGISK_API_VERSION 5
 

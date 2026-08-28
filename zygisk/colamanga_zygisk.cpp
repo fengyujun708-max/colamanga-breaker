@@ -24,7 +24,7 @@
 
 using zygisk::Api;
 using zygisk::AppSpecializeArgs;
-using zygisk::Module;
+using zygisk::ModuleBase;
 using zygisk::ServerSpecializeArgs;
 
 // ===== 假属性（从 device_id.json 读取，WebUI 实时改）=====
@@ -185,7 +185,7 @@ static jstring hook_Telephony_getLine1Number(JNIEnv* env, jobject) { return fake
 static jstring hook_Telephony_getSubscriberId(JNIEnv* env, jobject) { return fakeJString(env, s_imei); }
 static jstring hook_Telephony_getMeid(JNIEnv* env, jobject) { return fakeJString(env, s_meid); }
 
-class ColaMangaModule : public Module {
+class ColaMangaModule : public ModuleBase {
 public:
     Api* api;
     JNIEnv* env;
