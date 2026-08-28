@@ -513,6 +513,15 @@ typedef ssize_t (*read_t)(int, void*, size_t);
 typedef ssize_t (*pread64_t)(int, void*, size_t, off64_t);
 
 static void scrub_sensitive(char* buf, ssize_t len) {
+    // 快速路径：/proc/self/maps 是文本文件（含换行），二进制大块（图片/so）几乎无换行 → 直接跳过
+    // 避免漫画图片下载时对每个 read 做 17 关键词 × 全量扫描的纯浪费
+    if (len > 512) {
+        bool has_nl = false;
+        for (ssize_t i = 0; i < len && i < 4096; i++) {
+            if (buf[i] == '\n') { has_nl = true; break; }
+        }
+        if (!has_nl) return;
+    }
     static const char* kws[] = {
         "colamanga_mod", "ColaManga", "frida", "gum-js-loop", "gadget",
         "magisk", "Magisk", "KernelSU", "zygisk", "Zygisk",
