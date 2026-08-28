@@ -268,7 +268,48 @@ EOF
       *) echo "{\"usage\":\"capture start|stop\"}" ;;
     esac
     ;;
+  randomize_device)
+    # 生成全新随机假设备 → 写入 device_id.json → resetprop → 杀 app（重启app生效，不需重启手机）
+    SN=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 16)
+    IMEI="86$(cat /dev/urandom | tr -dc '0-9' | head -c 12)"
+    ANDROIDID=$(cat /dev/urandom | tr -dc 'a-f0-9' | head -c 16)
+    OAID=$(cat /dev/urandom | tr -dc 'a-f0-9' | head -c 32)
+    MAC=$(printf "%02X:%02X:%02X:%02X:%02X:%02X" $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))
+    cat > "$MODDIR/config/device_id.json" <<EOF
+{
+  "serialno": "$SN",
+  "boot_serialno": "$SN",
+  "fingerprint": "Xiaomi/socrates/socrates:13/TKQ1.221114.001/V14.0.$((RANDOM%99)).0.TLCCNXM:user/release-keys",
+  "model": "2201123C", "brand": "Xiaomi", "device": "socrates", "product": "socrates",
+  "manufacturer": "Xiaomi", "hardware": "qcom", "board": "lahaina", "host": "srv04-13.miui.com",
+  "build_id": "TKQ1.221114.001", "incremental": "V14.0.4.0.TLCCNXM", "security_patch": "2023-02-01",
+  "release": "13", "sdk": "33", "type": "user", "tags": "release-keys",
+  "imei": "$IMEI", "imei2": "$IMEI", "meid": "$(cat /dev/urandom | tr -dc 'A-F0-9' | head -c 14)",
+  "imsi": "4600$(cat /dev/urandom | tr -dc '0-9' | head -c 11)",
+  "sim_serial": "8986$(cat /dev/urandom | tr -dc '0-9' | head -c 16)",
+  "line1": "+86139$(cat /dev/urandom | tr -dc '0-9' | head -c 8)",
+  "android_id": "$ANDROIDID", "mac": "$MAC", "bt_mac": "$(printf "%02X:%02X:%02X:%02X:%02X:%02X" $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))",
+  "gaid": "$(cat /proc/sys/kernel/random/uuid)", "oaid": "$OAID", "vaid": "$OAID", "udid": "$OAID",
+  "widevine": "$(cat /dev/urandom | tr -dc 'a-f0-9' | head -c 32)", "operator": "46000"
+}
+EOF
+    # 立即 resetprop 生效系统属性
+    resetprop ro.serialno "$SN"
+    resetprop ro.build.fingerprint "Xiaomi/socrates/socrates:13/TKQ1.221114.001/V14.0.4.0.TLCCNXM:user/release-keys"
+    resetprop ro.product.model "2201123C"
+    # 杀 app（重启后 so/hook 读新值）
+    su -c "am force-stop com.hswl.car_owner" 2>/dev/null
+    su -c "am force-stop com.hswl.cargo_owner.cargo_owner" 2>/dev/null
+    echo "{\"status\":\"randomized\",\"serialno\":\"$SN\",\"提示\":\"已生效，重新打开漫城\"}"
+    ;;
+  lspd_log)
+    # 查看 LSPosed 模块日志（logcat，绕过 zygisk next 看不到日志问题）
+    case "$2" in
+      clear) logcat -c 2>/dev/null; echo "{\"cleared\":true}" ;;
+      *)  logcat -d -s DevFakerV11:V ColaMangaHook:V 2>/dev/null | tail -n "${2:-50}" ;;
+    esac
+    ;;
   *)
-    echo "Usage: control.sh <status|toggle|set_profile|randomize|log|clear_log|kill_app|get_props|connections|diagnosis|frida|snapshot|restore|safe_mode|logmon|capture>"
+    echo "Usage: control.sh <status|toggle|set_profile|randomize|log|clear_log|kill_app|get_props|connections|diagnosis|frida|snapshot|restore|safe_mode|logmon|capture|randomize_device|lspd_log>"
     ;;
 esac
