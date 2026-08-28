@@ -134,23 +134,11 @@ function run(cmd) {
 }
 
 var HOOKS=[
- {k:'hook_property',     n:'属性伪装',        d:'ro.* 假值 (__system_property_get)'},
- {k:'hook_property_cb',  n:'Java属性回调',    d:'SystemProperties.get 全覆盖'},
- {k:'hook_ptrace',       n:'反调试',          d:'TRACEME=0 / ATTACH=-1'},
- {k:'hook_access',       n:'文件隐藏',        d:'access 拦 frida/magisk/xposed'},
- {k:'hook_open',         n:'文件沙箱(open)',  d:'open 拦敏感路径'},
- {k:'hook_openat',       n:'文件沙箱(openat)',d:'openat 拦敏感路径'},
- {k:'hook_stat',         n:'路径枚举隐藏',    d:'stat/lstat/fstatat'},
- {k:'hook_readlink',     n:'FD路径隐藏',      d:'readlink/readlinkat 掩 .so 真实路径'},
- {k:'hook_uname',        n:'内核伪装',        d:'清 KernelSU/Magisk 标记'},
- {k:'hook_connect',      n:'抓包+反下发',     d:'IP:port 记录 + 阻断风控'},
- {k:'hook_getaddrinfo',  n:'DNS+反下发',      d:'域名记录 + 阻断风控'},
- {k:'hook_jni',          n:'JNI设备标识',     d:'IMEI/MAC/Widevine/序列号'},
- {k:'hook_read',         n:'内容scrub',       d:'read/pread64 抹敏感串'},
- {k:'hook_ssl_unlock',   n:'SSL解锁注入',     d:'vipflag false→true'},
- {k:'file_sandbox',      n:'文件沙箱总开关',  d:'阻断其他 app 私有数据'},
- {k:'hide_maps',         n:'隐藏maps',        d:'掩盖 inline hook trampoline'},
- {k:'net_blocklist',     n:'反下发阻断',      d:'拒连 blocklist 风控域名'}
+ {k:'hook_connect',      n:'反下发+抓包',     d:'connect 阻断风控 + IP:port 记录'},
+ {k:'hook_getaddrinfo',  n:'DNS反下发+抓包',  d:'getaddrinfo 阻断风控 + 域名记录'},
+ {k:'hook_ssl_unlock',   n:'SSL章节解锁',     d:'SSL_read vipflag false→true 注入'},
+ {k:'net_blocklist',     n:'反下发总开关',    d:'拒连 blocklist 风控域名'},
+ {k:'capture',           n:'抓包开关',        d:'connect/DNS 记录日志'}
 ];
 
 function loadHooks(){

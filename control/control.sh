@@ -364,7 +364,7 @@ EOF
     # 返回全部 hook 开关 + 已加载状态（可视化仪表盘）
     printf '{"conf":{'
     SEP=""
-    for k in hook_property hook_property_cb hook_ptrace hook_access hook_open hook_openat hook_stat hook_readlink hook_uname hook_connect hook_getaddrinfo hook_jni hook_read hook_ssl_unlock file_sandbox hide_maps net_blocklist; do
+    for k in hook_connect hook_getaddrinfo hook_ssl_unlock net_blocklist capture; do
       V=$(grep "^$k=" "$MODDIR/config/hooks.conf" 2>/dev/null | cut -d= -f2)
       [ -z "$V" ] && V=1
       printf '%s"%s":"%s"' "$SEP" "$k" "$V"

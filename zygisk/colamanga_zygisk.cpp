@@ -82,6 +82,7 @@ struct HookCfg {
     int file_sandbox      = 1;   // 文件沙箱：阻断其他 app 私有数据
     int hide_maps         = 1;   // 隐藏 /proc/self/maps（掩盖 inline hook trampoline）
     int net_blocklist     = 1;   // 反服务器下发：阻断风控域名
+    int capture          = 1;   // 抓包：connect记录IP:port + getaddrinfo记录DNS（开关式）
 };
 static volatile HookCfg g_cfg;
 static volatile uint32_t g_calls = 0;
@@ -129,6 +130,7 @@ static void read_hooks_conf() {
             else if (!strncmp(p, "file_sandbox=", 13))     g_cfg.file_sandbox     = conf_get_int(p);
             else if (!strncmp(p, "hide_maps=", 10))        g_cfg.hide_maps        = conf_get_int(p);
             else if (!strncmp(p, "net_blocklist=", 14))    g_cfg.net_blocklist    = conf_get_int(p);
+            else if (!strncmp(p, "capture=", 8))          g_cfg.capture         = conf_get_int(p);
         }
         if (!nl) break;
         p = nl + 1;
@@ -487,12 +489,13 @@ static bool is_blocked_host(const char* host) {
     return hit;
 }
 static int hook_connect(int sockfd, const struct sockaddr* addr, socklen_t addrlen) {
+    try_install_ssl();  // 每次网络请求时尝试装 SSL 解锁（libflutter 晚加载，g_ssl_hooked 防重入）
     if (addr) {
         char ip[64] = {0}; int port = 0;
         if (addr->sa_family == AF_INET) { inet_ntop(AF_INET, &((const struct sockaddr_in*)addr)->sin_addr, ip, sizeof(ip)); port = ntohs(((const struct sockaddr_in*)addr)->sin_port); }
         else if (addr->sa_family == AF_INET6) { inet_ntop(AF_INET6, &((const struct sockaddr_in6*)addr)->sin6_addr, ip, sizeof(ip)); port = ntohs(((const struct sockaddr_in6*)addr)->sin6_port); }
         if (g_cfg.hook_connect && ip[0] && is_blocked_host(ip)) { errno = ECONNREFUSED; return -1; }
-        if (ip[0] && port > 0) LOGI("[NET] %s:%d", ip, port);
+        if (g_cfg.capture && ip[0] && port > 0) LOGI("[NET] %s:%d", ip, port);
     }
     return ((connect_t)tramp_connect)(sockfd, addr, addrlen);
 }
@@ -501,7 +504,7 @@ static int hook_connect(int sockfd, const struct sockaddr* addr, socklen_t addrl
 static void* tramp_getaddrinfo = nullptr;
 typedef int (*getaddrinfo_t)(const char*, const char*, const struct addrinfo*, struct addrinfo**);
 static int hook_getaddrinfo(const char* node, const char* service, const struct addrinfo* hints, struct addrinfo** res) {
-    if (node) LOGI("[DNS] %s", node);
+    if (g_cfg.capture && node) LOGI("[DNS] %s", node);
     if (g_cfg.hook_getaddrinfo && node && is_blocked_host(node)) return EAI_NONAME;
     return ((getaddrinfo_t)tramp_getaddrinfo)(node, service, hints, res);
 }
@@ -695,26 +698,13 @@ public:
         FILE* sf = fopen("/data/adb/modules/colamanga_mod/run/hooks_status.txt", "w");
         if (sf) fclose(sf);
 
-        // 1. inline hook libc（17 个：含 read/pread64 scrub + SSL_read 解锁）
-        void* fn;
-        tramp_property   = inline_hook("property_get", dlsym(RTLD_DEFAULT, "__system_property_get"), (void*)hook_property_get);
-        tramp_property_cb= inline_hook("property_read_cb", dlsym(RTLD_DEFAULT, "__system_property_read_callback"), (void*)hook_property_read_cb);
-        tramp_ptrace     = inline_hook("ptrace", dlsym(RTLD_DEFAULT, "ptrace"), (void*)hook_ptrace);
-        tramp_access     = inline_hook("access", dlsym(RTLD_DEFAULT, "access"), (void*)hook_access);
-        tramp_open       = inline_hook("open", dlsym(RTLD_DEFAULT, "open"), (void*)hook_open);
-        tramp_openat     = inline_hook("openat", dlsym(RTLD_DEFAULT, "openat"), (void*)hook_openat);
-        tramp_stat       = inline_hook("stat", dlsym(RTLD_DEFAULT, "stat"), (void*)hook_stat);
-        tramp_lstat      = inline_hook("lstat", dlsym(RTLD_DEFAULT, "lstat"), (void*)hook_lstat);
-        tramp_fstatat    = inline_hook("fstatat", dlsym(RTLD_DEFAULT, "fstatat"), (void*)hook_fstatat);
-        tramp_readlink   = inline_hook("readlink", dlsym(RTLD_DEFAULT, "readlink"), (void*)hook_readlink);
-        tramp_readlinkat = inline_hook("readlinkat", dlsym(RTLD_DEFAULT, "readlinkat"), (void*)hook_readlinkat);
-        tramp_uname      = inline_hook("uname", dlsym(RTLD_DEFAULT, "uname"), (void*)hook_uname);
+        // 核心功能 hook（设备伪造已交给 Privacy Kit，避免与其 Zygisk 层二次 hook 冲突）：
+        //   1. connect/getaddrinfo —— 反服务器下发（拒连 blocklist 风控域名）
+        //   2. SSL_read —— vipflag 章节解锁注入
         tramp_connect    = inline_hook("connect", dlsym(RTLD_DEFAULT, "connect"), (void*)hook_connect);
         tramp_getaddrinfo= inline_hook("getaddrinfo", dlsym(RTLD_DEFAULT, "getaddrinfo"), (void*)hook_getaddrinfo);
-        tramp_read       = inline_hook("read", dlsym(RTLD_DEFAULT, "read"), (void*)hook_read);
-        tramp_pread64    = inline_hook("pread64", dlsym(RTLD_DEFAULT, "pread64"), (void*)hook_pread64);
-        try_install_ssl();  // SSL_read 延迟安装（libssl/libflutter 晚加载，未装成由 maybe_reload 补装）
-        LOGI("[hook] libc inline hook 完成（16 个立即 + SSL_read 延迟安装）");
+        try_install_ssl();  // libflutter 未加载时，由 hook_connect 里的 try_install_ssl 在网络请求时补装
+        LOGI("[hook] 核心 hook 完成：反下发(connect/getaddrinfo) + 章节解锁(SSL_read)");
 
         // 2. JNI native 方法 hook（设备标识）——每个独立 try-catch，失败自动降级不崩
         if (g_cfg.hook_jni) {
