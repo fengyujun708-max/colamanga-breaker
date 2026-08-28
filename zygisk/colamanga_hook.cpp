@@ -197,15 +197,36 @@ static int hook_access(const char* path, int mode) {
     return ((access_t)tramp_access)(path, mode);
 }
 
-// ====== connect（抓包）======
+// ====== connect（抓包记录到文件，capture 开关控制）======
 static void* tramp_connect = nullptr;
 typedef int (*connect_t)(int, const struct sockaddr*, socklen_t);
+static int capture_enabled = 0;
+
 static int hook_connect(int sockfd, const struct sockaddr* addr, socklen_t addrlen) {
     if (addr) {
         char ip[64] = {0}; int port = 0;
         if (addr->sa_family == AF_INET) { inet_ntop(AF_INET, &((const struct sockaddr_in*)addr)->sin_addr, ip, sizeof(ip)); port = ntohs(((const struct sockaddr_in*)addr)->sin_port); }
         else if (addr->sa_family == AF_INET6) { inet_ntop(AF_INET6, &((const struct sockaddr_in6*)addr)->sin6_addr, ip, sizeof(ip)); port = ntohs(((const struct sockaddr_in6*)addr)->sin6_port); }
-        if (ip[0] && port > 0) LOGI("[NET] %s:%d", ip, port);
+        if (ip[0] && port > 0) {
+            // 读 capture 开关（实时）
+            FILE* sf = fopen("/data/adb/modules/colamanga_mod/config/settings.conf", "r");
+            capture_enabled = 0;
+            if (sf) {
+                char line[128];
+                while (fgets(line, sizeof(line), sf)) {
+                    if (strstr(line, "packet_capture=1")) capture_enabled = 1;
+                }
+                fclose(sf);
+            }
+            if (capture_enabled) {
+                // 写 IP:port 到文件（含时间戳）
+                FILE* lf = fopen("/data/adb/modules/colamanga_mod/logs/network.log", "a");
+                if (lf) {
+                    fprintf(lf, "%s%s:%d\n", "", ip, port);
+                    fclose(lf);
+                }
+            }
+        }
     }
     return ((connect_t)tramp_connect)(sockfd, addr, addrlen);
 }

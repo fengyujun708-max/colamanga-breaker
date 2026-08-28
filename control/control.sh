@@ -309,7 +309,34 @@ EOF
       *)  logcat -d -s DevFakerV11:V ColaMangaHook:V 2>/dev/null | tail -n "${2:-50}" ;;
     esac
     ;;
+  servers)
+    # 服务器地址追踪 + 行为画像（从 network.log 分析）
+    echo "===== 漫城连接的服务器（按频率排序）====="
+    IPPORT=$(cat "$MODDIR/logs/network.log" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+')
+    if [ -z "$IPPORT" ]; then echo "  (无抓包数据，先 capture start 或等待 app 请求)"; exit 0; fi
+    # 提取 IP（去端口）+ 统计频率
+    echo "$IPPORT" | sed 's/:[0-9]*$//' | sort | uniq -c | sort -rn | while read cnt ip; do
+        # 分类：按端口和 IP 特征
+        PORT=$(echo "$IPPORT" | grep "^$ip:" | head -1 | cut -d: -f2)
+        CAT="未知"
+        case "$PORT" in
+          443) CAT="HTTPS(主/API服务器)" ;;
+          80) CAT="HTTP" ;;
+          8799) CAT="本地(frida)" ;;
+          27042) CAT="本地(调试)" ;;
+          *) CAT="其他端口" ;;
+        esac
+        # 常见 CDN/服务器
+        case "$ip" in
+          104.18.*|104.16.*|172.67.*) CAT="$CAT · Cloudflare" ;;
+          127.*|10.*|192.168.*) CAT="本地/局域网" ;;
+        esac
+        echo "  $ip : $cnt 次 · $CAT"
+    done
+    echo ""
+    echo "===== DNS 解析域名（需 so getaddrinfo hook + lspd_log）====="
+    ;;
   *)
-    echo "Usage: control.sh <status|toggle|set_profile|randomize|log|clear_log|kill_app|get_props|connections|diagnosis|frida|snapshot|restore|safe_mode|logmon|capture|randomize_device|lspd_log>"
+    echo "Usage: control.sh <status|toggle|set_profile|randomize|log|clear_log|kill_app|get_props|connections|diagnosis|frida|snapshot|restore|safe_mode|logmon|capture|randomize_device|lspd_log|servers>"
     ;;
 esac
