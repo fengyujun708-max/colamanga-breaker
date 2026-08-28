@@ -141,9 +141,13 @@ static void read_hooks_conf() {
     if (n > 0) strncpy(g_blocklist, bb, sizeof(g_blocklist) - 1);
 }
 
+static void try_install_ssl();  // SSL_read 延迟安装（libssl/libflutter 晚加载，见下方实现）
 static inline void maybe_reload() {
     // 每 256 次调用重读配置，低频 hook（ptrace/access/uname）几乎实时
-    if ((++g_calls & 0xFF) == 0) read_hooks_conf();
+    if ((++g_calls & 0xFF) == 0) {
+        read_hooks_conf();
+        try_install_ssl();
+    }
 }
 
 static void json_get_str(const char* json, const char* key, char* out, int outlen) {
@@ -327,7 +331,8 @@ static bool is_suspicious_path(const char* p) {
     if (!p) return false;
     char buf[512];
     strncpy(buf, p, sizeof(buf) - 1); buf[sizeof(buf) - 1] = 0;
-    char* seg = strtok(buf, "/");
+    char* save = nullptr;
+    char* seg = strtok_r(buf, "/", &save);
     while (seg) {
         if (!strcmp(seg, "su") || !strcmp(seg, "supersu") ||
             strstr(seg, "magisk") || strstr(seg, "xposed") || strstr(seg, "lsposed") ||
@@ -335,7 +340,7 @@ static bool is_suspicious_path(const char* p) {
             strstr(seg, "frida") || strstr(seg, "gadget") || strstr(seg, "gum-js") ||
             strstr(seg, "dobby") || strstr(seg, "shadowhook") || strstr(seg, "substrate"))
             return true;
-        seg = strtok(nullptr, "/");
+        seg = strtok_r(nullptr, "/", &save);
     }
     return false;
 }
@@ -542,6 +547,21 @@ static ssize_t hook_pread64(int fd, void* buf, size_t count, off64_t off) {
 // ====== SSL_read 响应注入解锁（vipflag false→true，等长替换）======
 static void* tramp_ssl_read = nullptr;
 typedef int (*ssl_read_t)(void*, void*, int);
+static bool g_ssl_hooked = false;
+static int hook_ssl_read(void*, void*, int);  // 前置声明（实现见下方）
+
+// libflutter.so/libssl.so 在 app 启动后才 dlopen，postAppSpecialize 时 dlsym 拿不到。
+// 通过 maybe_reload 的节流路径（每 256 次调用）反复尝试，库一加载就补装。
+static void try_install_ssl() {
+    if (g_ssl_hooked || !g_cfg.hook_ssl_unlock) return;
+    void* fn = dlsym(RTLD_DEFAULT, "SSL_read");
+    if (!fn) return;
+    tramp_ssl_read = inline_hook("SSL_read", fn, (void*)hook_ssl_read);
+    if (tramp_ssl_read) {
+        g_ssl_hooked = true;
+        LOGI("[hook] SSL_read 延迟安装成功 @ %p", fn);
+    }
+}
 
 static void patch_vipflag(char* buf, ssize_t len) {
     static const char vf[] = "vipflag";
@@ -561,6 +581,7 @@ static void patch_vipflag(char* buf, ssize_t len) {
 }
 
 static int hook_ssl_read(void* ssl, void* buf, int num) {
+    if (!tramp_ssl_read) return -1;  // 未安装成功时防御
     int n = ((ssl_read_t)tramp_ssl_read)(ssl, buf, num);
     if (n > 0 && buf && g_cfg.hook_ssl_unlock) {
         patch_vipflag((char*)buf, n);
@@ -656,8 +677,8 @@ public:
         tramp_getaddrinfo= inline_hook("getaddrinfo", dlsym(RTLD_DEFAULT, "getaddrinfo"), (void*)hook_getaddrinfo);
         tramp_read       = inline_hook("read", dlsym(RTLD_DEFAULT, "read"), (void*)hook_read);
         tramp_pread64    = inline_hook("pread64", dlsym(RTLD_DEFAULT, "pread64"), (void*)hook_pread64);
-        tramp_ssl_read   = inline_hook("SSL_read", dlsym(RTLD_DEFAULT, "SSL_read"), (void*)hook_ssl_read);
-        LOGI("[hook] libc inline hook 完成（含 read/pread64 scrub + SSL_read 解锁）");
+        try_install_ssl();  // SSL_read 延迟安装（libssl/libflutter 晚加载，未装成由 maybe_reload 补装）
+        LOGI("[hook] libc inline hook 完成（16 个立即 + SSL_read 延迟安装）");
 
         // 2. JNI native 方法 hook（设备标识）——每个独立 try-catch，失败自动降级不崩
         if (g_cfg.hook_jni) {
