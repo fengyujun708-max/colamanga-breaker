@@ -565,60 +565,84 @@ typedef int (*ssl_read_t)(void*, void*, int);
 static bool g_ssl_hooked = false;
 static int hook_ssl_read(void*, void*, int);  // 前置声明（实现见下方）
 
-// ===== 手动解析 ELF .dynsym 找隐藏符号 =====
-// dlsym 只能找到导出的 GLOBAL/WEAK 动态符号。Flutter libflutter.so 里的 BoringSSL
-// 符号被 -fvisibility=hidden 编译成 LOCAL，dlsym 找不到——这正是 Frida enumerateSymbols
-// 能命中而原生 dlsym 找不到的原因。
-struct ElfSymIterArg { const char* so_name; uintptr_t base; };
+// ===== 从磁盘文件解析隐藏符号 =====
+// dlsym 只能找到 .dynsym 里导出的 GLOBAL/WEAK 符号。Flutter libflutter.so 的 BoringSSL
+// 符号被 -fvisibility=hidden 编译成 STB_LOCAL，只存在于 .symtab（non-alloc section，
+// 不加载进内存）——这正是 Frida enumerateSymbols 能命中而 dlsym/内存解析失败的原因。
+// 必须打开磁盘 .so 文件，解析 section headers 里的 .symtab + .dynsym。
 
-static int elf_sym_iter_cb(struct dl_phdr_info* info, size_t, void* data) {
-    ElfSymIterArg* a = (ElfSymIterArg*)data;
+struct ElfFileArg {
+    const char* so_name;   // 用于 strstr 匹配的库名，如 "libflutter.so"
+    const char* so_path;   // 匹配到的完整路径（dlpi_name）
+    uintptr_t   load_addr; // dlpi_addr
+};
+
+static int elf_file_iter_cb(struct dl_phdr_info* info, size_t, void* data) {
+    ElfFileArg* a = (ElfFileArg*)data;
     if (info->dlpi_name && strstr(info->dlpi_name, a->so_name)) {
-        a->base = info->dlpi_addr;
+        a->so_path   = info->dlpi_name;
+        a->load_addr = info->dlpi_addr;
         return 1;
     }
     return 0;
 }
 
 static void* elf_find_hidden_symbol(const char* so_name, const char* sym_name) {
-    ElfSymIterArg a = { so_name, 0 };
-    dl_iterate_phdr(elf_sym_iter_cb, &a);
-    uintptr_t base = a.base;
-    if (!base) return nullptr;
+    ElfFileArg a = { so_name, nullptr, 0 };
+    dl_iterate_phdr(elf_file_iter_cb, &a);
+    if (!a.so_path || !a.so_path[0]) return nullptr;
 
-    const Elf64_Ehdr* eh = (const Elf64_Ehdr*)base;
-    if (memcmp(eh->e_ident, ELFMAG, SELFMAG) != 0 || eh->e_type != ET_DYN) return nullptr;
+    // 1. 打开并 mmap 整个文件（section headers 只存在于磁盘镜像，不在运行内存）
+    int fd = open(a.so_path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return nullptr;
+    off_t fsz = lseek(fd, 0, SEEK_END);
+    if (fsz <= 0 || fsz > (off_t)(1u << 31)) { close(fd); return nullptr; }
+    void* map = mmap(nullptr, (size_t)fsz, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+    if (map == MAP_FAILED) return nullptr;
 
-    // 定位 PT_DYNAMIC → DT_SYMTAB / DT_STRTAB / DT_STRSZ
-    const Elf64_Phdr* ph = (const Elf64_Phdr*)(base + eh->e_phoff);
-    const Elf64_Dyn* dyn = nullptr;
-    for (int i = 0; i < eh->e_phnum; i++) {
-        if (ph[i].p_type == PT_DYNAMIC) { dyn = (const Elf64_Dyn*)(base + ph[i].p_vaddr); break; }
-    }
-    if (!dyn) return nullptr;
+    void* found = nullptr;
+    const Elf64_Ehdr* eh = (const Elf64_Ehdr*)map;
+    if (memcmp(eh->e_ident, ELFMAG, SELFMAG) == 0 &&
+        eh->e_ident[EI_CLASS] == ELFCLASS64 &&
+        eh->e_type == ET_DYN) {
 
-    const Elf64_Sym* symtab = nullptr;
-    const char* strtab = nullptr;
-    uintptr_t strsz = 0;
-    for (const Elf64_Dyn* d = dyn; d->d_tag != DT_NULL; d++) {
-        switch (d->d_tag) {
-            case DT_SYMTAB: symtab = (const Elf64_Sym*)(base + d->d_un.d_ptr); break;
-            case DT_STRTAB: strtab = (const char*)(base + d->d_un.d_ptr); break;
-            case DT_STRSZ:  strsz = d->d_un.d_val; break;
+        // 2. 计算 load bias = dlpi_addr - min(PT_LOAD p_vaddr)
+        uintptr_t min_vaddr = ~0ull;
+        const Elf64_Phdr* ph = (const Elf64_Phdr*)((char*)map + eh->e_phoff);
+        for (int i = 0; i < eh->e_phnum; i++) {
+            if (ph[i].p_type == PT_LOAD && ph[i].p_vaddr < min_vaddr)
+                min_vaddr = ph[i].p_vaddr;
+        }
+
+        if (min_vaddr != ~0ull && eh->e_shnum > 0) {
+            uintptr_t load_bias = a.load_addr - min_vaddr;
+
+            // 3. 遍历 section headers，找 .symtab(SHT_SYMTAB) + .dynsym(SHT_DYNSYM)
+            const Elf64_Shdr* sh = (const Elf64_Shdr*)((char*)map + eh->e_shoff);
+            for (int i = 0; i < eh->e_shnum && !found; i++) {
+                if (sh[i].sh_type != SHT_SYMTAB && sh[i].sh_type != SHT_DYNSYM) continue;
+                if (sh[i].sh_entsize != sizeof(Elf64_Sym)) continue;
+                if (sh[i].sh_link >= eh->e_shnum) continue;
+
+                size_t nsym = sh[i].sh_size / sizeof(Elf64_Sym);
+                const Elf64_Sym* sym = (const Elf64_Sym*)((char*)map + sh[i].sh_offset);
+                const char* strtab = (const char*)((char*)map + sh[sh[i].sh_link].sh_offset);
+
+                for (size_t k = 0; k < nsym; k++) {
+                    if (ELF64_ST_TYPE(sym[k].st_info) != STT_FUNC) continue;  // 只找函数符号
+                    if (sym[k].st_value == 0) continue;
+                    const char* name = strtab + sym[k].st_name;
+                    if (strcmp(name, sym_name) == 0) {
+                        found = (void*)(load_bias + sym[k].st_value);
+                        break;
+                    }
+                }
+            }
         }
     }
-    if (!symtab || !strtab || !strsz) return nullptr;
-
-    // 遍历 .dynsym（以 strsz 为上界，遇越界 st_name 提前退出）
-    for (uintptr_t i = 0; i < strsz; i++) {
-        uint32_t no = symtab[i].st_name;
-        if (no >= strsz) break;
-        const char* name = strtab + no;
-        if (name[0] && strcmp(name, sym_name) == 0) {
-            return (void*)(base + symtab[i].st_value);
-        }
-    }
-    return nullptr;
+    munmap(map, (size_t)fsz);
+    return found;
 }
 
 // 精确查找 SSL_read（对齐 Frida 原脚本 findSslRead 逻辑）：
